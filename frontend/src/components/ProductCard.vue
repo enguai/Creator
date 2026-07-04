@@ -13,6 +13,7 @@ defineProps({ product: { type: Object, required: true } })
       <ul class="tag-list" aria-label="产品特点">
         <li v-for="benefit in product.benefits" :key="benefit">{{ benefit }}</li>
       </ul>
+      <RouterLink class="product-detail-link" :to="product.route">查看产品详情 <span>→</span></RouterLink>
     </div>
   </article>
 </template>

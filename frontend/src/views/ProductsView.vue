@@ -6,31 +6,40 @@ import { products } from '../data/products'
   <div>
     <section class="page-intro container">
       <p class="eyebrow">OUR PRODUCTS</p>
-      <h1>为真实状态而生的<br />三款核心护理</h1>
-      <p>不追逐繁复步骤，回到肤感、质地与使用场景本身。</p>
+      <h1>三款核心护理，<br />各有清晰的答案</h1>
+      <p>依次探索山茶花软膜、小气泡抛光面膜与冰玛瑙眼膜的完整产品详情。</p>
     </section>
 
-    <section class="product-editorial">
-      <article v-for="(product, index) in products" :id="product.id" :key="product.id" class="editorial-row" :class="{ reverse: index % 2 }">
-        <div class="editorial-image"><img :src="product.image" :alt="`${product.name}产品图`" /></div>
-        <div class="editorial-copy">
+    <section class="product-index container" aria-label="产品子页面">
+      <RouterLink
+        v-for="product in products"
+        :key="product.id"
+        :to="product.route"
+        class="product-entry"
+        :class="`entry-${product.tone}`"
+      >
+        <div class="product-entry-image">
+          <img :src="product.image" :alt="`${product.name}产品主视觉`" />
+        </div>
+        <div class="product-entry-copy">
           <span class="large-number">{{ product.number }}</span>
           <p class="eyebrow">{{ product.en }}</p>
           <h2>{{ product.name }}</h2>
           <h3>{{ product.tagline }}</h3>
           <p>{{ product.description }}</p>
-          <div class="benefit-row"><span v-for="benefit in product.benefits" :key="benefit">{{ benefit }}</span></div>
-          <RouterLink class="text-link" to="/features">查看使用场景 <span>↗</span></RouterLink>
+          <ul class="tag-list" aria-label="产品特点">
+            <li v-for="benefit in product.benefits" :key="benefit">{{ benefit }}</li>
+          </ul>
+          <span class="entry-link">进入产品页面 <b>↗</b></span>
         </div>
-      </article>
+      </RouterLink>
     </section>
 
-    <section class="selection-guide section container">
-      <div class="section-heading"><div><p class="eyebrow">YOUR RITUAL</p><h2>今天，肌肤需要什么？</h2></div></div>
-      <div class="guide-grid">
-        <div><span>水润不足</span><h3>选择红山茶软膜</h3><p>适合希望获得丰润包裹感、让肌肤看起来柔软有光泽的时刻。</p></div>
-        <div><span>粗糙暗沉</span><h3>选择抛光面膜</h3><p>适合妆前或重要出镜前，为肌肤整理细腻、通透的视觉状态。</p></div>
-        <div><span>眼周疲惫</span><h3>选择冰玛瑙眼膜</h3><p>适合清晨与长时间工作后，用清凉贴合感唤回眼周舒展状态。</p></div>
+    <section class="product-index-note">
+      <div class="container">
+        <p class="eyebrow light">CHOOSE YOUR RITUAL</p>
+        <h2>从肌肤此刻的需要出发</h2>
+        <p>丰润紧致、细腻抛光或眼周淡纹，让每一次护理都有明确方向。</p>
       </div>
     </section>
   </div>
