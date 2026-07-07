@@ -29,11 +29,14 @@ SECRET_KEY = os.environ.get(
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.environ.get('DJANGO_DEBUG', 'True').lower() == 'true'
 
-ALLOWED_HOSTS = [
+CONFIGURED_ALLOWED_HOSTS = [
     host.strip()
     for host in os.environ.get('DJANGO_ALLOWED_HOSTS', '').split(',')
     if host.strip()
 ]
+ALLOWED_HOSTS = CONFIGURED_ALLOWED_HOSTS or (
+    ['localhost', '127.0.0.1', '[::1]', 'testserver'] if DEBUG else []
+)
 
 
 # Application definition
@@ -125,6 +128,9 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/6.0/howto/static-files/
 
 STATIC_URL = 'static/'
+
+MEDIA_URL = '/media/'
+MEDIA_ROOT = BASE_DIR / 'media'
 
 # SimpleUI admin branding (admin language follows LANGUAGE_CODE above).
 SIMPLEUI_HOME_INFO = False
