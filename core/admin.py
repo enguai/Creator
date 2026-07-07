@@ -11,7 +11,7 @@ class ProfileAdmin(admin.ModelAdmin):
 
 @admin.register(PayrollJob)
 class PayrollJobAdmin(admin.ModelAdmin):
-    list_display = ('id', 'room_type', 'week_start', 'status', 'created_at', 'updated_at')
+    list_display = ('id', 'room_type', 'week_start', 'week_end', 'status', 'created_at', 'updated_at')
     list_filter = ('status', 'room_type', 'created_at')
     search_fields = ('id', 'error_message')
     readonly_fields = ('id', 'created_at', 'updated_at')

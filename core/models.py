@@ -48,6 +48,7 @@ class PayrollJob(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     room_type = models.CharField(max_length=40, default='general')
     week_start = models.DateField(null=True, blank=True)
+    week_end = models.DateField(null=True, blank=True)
     status = models.CharField(
         max_length=20,
         choices=Status.choices,

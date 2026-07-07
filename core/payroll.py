@@ -23,6 +23,16 @@ def _file_summary(job, field_name):
     }
 
 
+def _payroll_period(job):
+    if job.week_start and job.week_end:
+        return f'{job.week_start.isoformat()} - {job.week_end.isoformat()}'
+    if job.week_start:
+        return f'{job.week_start.isoformat()} - 未填写'
+    if job.week_end:
+        return f'未填写 - {job.week_end.isoformat()}'
+    return '未填写'
+
+
 def generate_placeholder_payroll(job):
     """Generate a lightweight workbook proving the upload/download loop works.
 
@@ -47,8 +57,8 @@ def generate_placeholder_payroll(job):
 
     metadata = [
         ('任务编号', str(job.id)),
-        ('直播间类型', job.room_type),
-        ('薪资周开始日期', job.week_start.isoformat() if job.week_start else '未填写'),
+        ('选择直播间', job.room_type),
+        ('薪资计算周期', _payroll_period(job)),
         ('生成时间', timezone.localtime(timezone.now()).strftime('%Y-%m-%d %H:%M:%S')),
         ('当前阶段', '第一步：上传、生成测试文档、下载闭环已打通'),
     ]

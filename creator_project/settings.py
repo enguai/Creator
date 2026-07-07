@@ -132,6 +132,10 @@ STATIC_URL = 'static/'
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 
+# Payroll uploads can contain several screenshots and spreadsheets.
+DATA_UPLOAD_MAX_MEMORY_SIZE = 30 * 1024 * 1024
+FILE_UPLOAD_MAX_MEMORY_SIZE = 30 * 1024 * 1024
+
 # SimpleUI admin branding (admin language follows LANGUAGE_CODE above).
 SIMPLEUI_HOME_INFO = False
 SIMPLEUI_ANALYSIS = False

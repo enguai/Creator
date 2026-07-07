@@ -1,7 +1,7 @@
 <script setup>
-import { computed, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 
-import { createPayrollJob, getPayrollJob } from '../api/payroll'
+import { checkPayrollHealth, createPayrollJob, getPayrollJob } from '../api/payroll'
 
 const payrollFiles = [
   {
@@ -42,9 +42,14 @@ const selectedFiles = reactive(
 
 const roomType = ref('general')
 const weekStart = ref('')
+const weekEnd = ref('')
 const isSubmitting = ref(false)
 const errorMessage = ref('')
 const job = ref(null)
+const apiHealth = ref({
+  status: 'checking',
+  message: '正在连接薪资计算后端...',
+})
 
 const canSubmit = computed(() => payrollFiles.every((item) => selectedFiles[item.key]) && !isSubmitting.value)
 
@@ -57,6 +62,16 @@ const statusLabel = computed(() => {
   }
 
   return labels[job.value?.status] || '尚未提交'
+})
+
+const apiHealthLabel = computed(() => {
+  const labels = {
+    checking: '正在检测',
+    ok: '后端已连接',
+    error: '后端未连接',
+  }
+
+  return labels[apiHealth.value.status] || '未知状态'
 })
 
 function handleFileChange(key, event) {
@@ -102,6 +117,7 @@ async function submitPayrollJob() {
   const formData = new FormData()
   formData.append('room_type', roomType.value)
   if (weekStart.value) formData.append('week_start', weekStart.value)
+  if (weekEnd.value) formData.append('week_end', weekEnd.value)
 
   payrollFiles.forEach((item) => {
     formData.append(item.key, selectedFiles[item.key])
@@ -118,6 +134,9 @@ async function submitPayrollJob() {
     }
   } catch (error) {
     errorMessage.value = error.message || '提交失败，请稍后重试。'
+    if (error.payload?.id) {
+      job.value = error.payload
+    }
   } finally {
     isSubmitting.value = false
   }
@@ -125,8 +144,23 @@ async function submitPayrollJob() {
 
 function downloadResult() {
   if (!job.value?.download_url) return
-  window.location.href = job.value.download_url
+  window.location.href = new URL(job.value.download_url, window.location.origin).href
 }
+
+onMounted(async () => {
+  try {
+    const health = await checkPayrollHealth()
+    apiHealth.value = {
+      status: 'ok',
+      message: health.message || '薪资计算后端已连接。',
+    }
+  } catch (error) {
+    apiHealth.value = {
+      status: 'error',
+      message: error.message || '无法连接到薪资计算后端。',
+    }
+  }
+})
 </script>
 
 <template>
@@ -145,6 +179,10 @@ function downloadResult() {
           <span>STEP 01</span>
           <strong>上传 → 后台生成测试文档 → 下载</strong>
           <p>这一步用于确认网站功能链路可用，真实薪资算法会在下一阶段接入。</p>
+          <div class="payroll-api-status" :class="`is-${apiHealth.status}`">
+            <b>{{ apiHealthLabel }}</b>
+            <small>{{ apiHealth.message }}</small>
+          </div>
         </div>
       </div>
     </section>
@@ -161,7 +199,7 @@ function downloadResult() {
 
         <div class="payroll-options">
           <label>
-            <span>直播间类型</span>
+            <span>选择直播间</span>
             <select v-model="roomType">
               <option v-for="item in roomTypes" :key="item.value" :value="item.value">
                 {{ item.label }}
@@ -170,8 +208,12 @@ function downloadResult() {
           </label>
 
           <label>
-            <span>薪资周开始日期（可选）</span>
-            <input v-model="weekStart" type="date" />
+            <span>薪资计算周期</span>
+            <div class="payroll-period-inputs">
+              <input v-model="weekStart" type="date" aria-label="薪资计算周期开始日期" />
+              <b>—</b>
+              <input v-model="weekEnd" type="date" aria-label="薪资计算周期结束日期" />
+            </div>
           </label>
         </div>
 
@@ -189,11 +231,19 @@ function downloadResult() {
           </label>
         </div>
 
-        <p v-if="errorMessage" class="payroll-error">{{ errorMessage }}</p>
+        <div v-if="errorMessage" class="payroll-error-box">
+          <strong>提交失败</strong>
+          <p>{{ errorMessage }}</p>
+          <ul>
+            <li>如果提示后端未连接，请先启动 Django：python manage.py runserver 0.0.0.0:8000。</li>
+            <li>如果是在阿里云访问，请确认 Nginx 已把 /api/ 代理到 Django 后端。</li>
+            <li>如果提示上传过大，请压缩图片或提高 Nginx 的 client_max_body_size。</li>
+          </ul>
+        </div>
 
         <div class="payroll-actions">
           <button class="primary-button" type="submit" :disabled="!canSubmit">
-            {{ isSubmitting ? '正在提交计算...' : '提交计算' }}
+            {{ isSubmitting ? '正在提交...' : '提交' }}
           </button>
           <p>当前状态：{{ statusLabel }}</p>
         </div>
@@ -218,9 +268,9 @@ function downloadResult() {
               <dt>状态</dt>
               <dd>{{ statusLabel }}</dd>
             </div>
-            <div v-if="job.week_start">
-              <dt>薪资周</dt>
-              <dd>{{ job.week_start }}</dd>
+            <div v-if="job.week_start || job.week_end">
+              <dt>薪资计算周期</dt>
+              <dd>{{ job.week_start || '未填写' }} - {{ job.week_end || '未填写' }}</dd>
             </div>
           </dl>
 
