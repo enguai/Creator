@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 
 import { checkPayrollHealth, createPayrollJob, getPayrollJob } from '../api/payroll'
 
@@ -33,6 +33,21 @@ const roomTypes = [
   { value: 'z3-polish', label: 'Z3 抛光直播间' },
 ]
 
+const formAutomationTypes = {
+  expense: {
+    label: '费用报销表',
+    templateName: '费用报销模板.xlsx',
+    templateUrl: '/templates/费用报销模板.xlsx',
+    description: '适合根据购买信息截图和发票文件，自动整理费用报销明细。',
+  },
+  procurement: {
+    label: '采购申请表',
+    templateName: '采购申请表模板.xlsx',
+    templateUrl: '/templates/采购申请表模板.xlsx',
+    description: '适合根据商品参考图和链接清单，自动整理采购申请明细。',
+  },
+}
+
 const selectedFiles = reactive(
   payrollFiles.reduce((files, item) => {
     files[item.key] = null
@@ -49,6 +64,14 @@ const job = ref(null)
 const apiHealth = ref({
   status: 'checking',
   message: '正在连接薪资计算后端...',
+})
+const automationType = ref('expense')
+const automationMessage = ref('')
+const automationFiles = reactive({
+  purchaseScreenshots: [],
+  invoices: [],
+  referenceImages: [],
+  linkTxt: null,
 })
 
 const canSubmit = computed(() => payrollFiles.every((item) => selectedFiles[item.key]) && !isSubmitting.value)
@@ -74,6 +97,16 @@ const apiHealthLabel = computed(() => {
   return labels[apiHealth.value.status] || '未知状态'
 })
 
+const selectedAutomationType = computed(() => formAutomationTypes[automationType.value])
+
+const automationSubmitReady = computed(() => {
+  if (automationType.value === 'expense') {
+    return automationFiles.purchaseScreenshots.length > 0 && automationFiles.invoices.length > 0
+  }
+
+  return automationFiles.referenceImages.length > 0 && Boolean(automationFiles.linkTxt)
+})
+
 function handleFileChange(key, event) {
   const [file] = event.target.files
   selectedFiles[key] = file || null
@@ -83,6 +116,26 @@ function formatFileSize(file) {
   if (!file) return ''
   if (file.size < 1024 * 1024) return `${(file.size / 1024).toFixed(1)} KB`
   return `${(file.size / 1024 / 1024).toFixed(2)} MB`
+}
+
+function formatFileCount(files) {
+  if (!files?.length) return '尚未选择'
+  return `${files.length} 个文件`
+}
+
+function handleAutomationFolderChange(key, event) {
+  automationFiles[key] = Array.from(event.target.files || [])
+}
+
+function handleAutomationFileChange(key, event) {
+  const [file] = event.target.files || []
+  automationFiles[key] = file || null
+}
+
+function submitAutomationForm() {
+  automationMessage.value = automationSubmitReady.value
+    ? `已完成 ${selectedAutomationType.value.label} 的前端材料收集。下一步接入后台后，将在这里生成下载按钮。`
+    : '请先补齐当前表格类型所需的上传材料。'
 }
 
 function wait(ms) {
@@ -160,6 +213,14 @@ onMounted(async () => {
       message: error.message || '无法连接到薪资计算后端。',
     }
   }
+})
+
+watch(automationType, () => {
+  automationMessage.value = ''
+  automationFiles.purchaseScreenshots = []
+  automationFiles.invoices = []
+  automationFiles.referenceImages = []
+  automationFiles.linkTxt = null
 })
 </script>
 
@@ -286,6 +347,98 @@ onMounted(async () => {
           </button>
         </div>
       </aside>
+    </section>
+
+    <section class="section container form-automation-section">
+      <div class="form-automation-heading">
+        <div>
+          <p class="eyebrow">FORM AUTOMATION</p>
+          <h2>报销表格自动化</h2>
+          <p>
+            先选择要生成的表格类型，下载对应模板，再上传本次生成所需的材料。当前阶段先完成前端流程，
+            后续确认后再接入后台自动生成 Excel。
+          </p>
+        </div>
+      </div>
+
+      <div class="form-automation-card">
+        <div class="automation-type-switch">
+          <button
+            v-for="item in Object.entries(formAutomationTypes)"
+            :key="item[0]"
+            type="button"
+            :class="{ active: automationType === item[0] }"
+            @click="automationType = item[0]"
+          >
+            <span>{{ item[1].label }}</span>
+            <small>{{ item[1].description }}</small>
+          </button>
+        </div>
+
+        <div class="automation-template-box">
+          <div>
+            <span>当前模板</span>
+            <strong>{{ selectedAutomationType.templateName }}</strong>
+            <p>{{ selectedAutomationType.description }}</p>
+          </div>
+          <a :href="selectedAutomationType.templateUrl" download>下载模板</a>
+        </div>
+
+        <div v-if="automationType === 'procurement'" class="automation-upload-grid">
+          <label class="automation-upload-card">
+            <input
+              type="file"
+              webkitdirectory
+              directory
+              multiple
+              @change="handleAutomationFolderChange('referenceImages', $event)"
+            />
+            <span>参考图文件夹</span>
+            <strong>{{ formatFileCount(automationFiles.referenceImages) }}</strong>
+            <p>上传商品参考图所在文件夹，后续用于识别物品外观、规格和附件。</p>
+          </label>
+
+          <label class="automation-upload-card">
+            <input type="file" accept=".txt,text/plain" @change="handleAutomationFileChange('linkTxt', $event)" />
+            <span>链接 txt 文件</span>
+            <strong>{{ automationFiles.linkTxt?.name || '点击选择 .txt 文件' }}</strong>
+            <p>上传商品链接清单，后续用于匹配参考图与采购链接。</p>
+          </label>
+        </div>
+
+        <div v-else class="automation-upload-grid">
+          <label class="automation-upload-card">
+            <input
+              type="file"
+              webkitdirectory
+              directory
+              multiple
+              @change="handleAutomationFolderChange('purchaseScreenshots', $event)"
+            />
+            <span>购买信息截图文件夹</span>
+            <strong>{{ formatFileCount(automationFiles.purchaseScreenshots) }}</strong>
+            <p>上传购买记录、订单信息或付款信息截图所在文件夹。</p>
+          </label>
+
+          <label class="automation-upload-card">
+            <input
+              type="file"
+              webkitdirectory
+              directory
+              multiple
+              @change="handleAutomationFolderChange('invoices', $event)"
+            />
+            <span>发票文件夹</span>
+            <strong>{{ formatFileCount(automationFiles.invoices) }}</strong>
+            <p>上传 PDF 或图片发票所在文件夹，后续会与购买信息逐项匹配。</p>
+          </label>
+        </div>
+
+        <div class="automation-actions">
+          <button type="button" class="secondary-button" @click="submitAutomationForm">提交</button>
+          <p>{{ automationMessage || '后台生成接口尚未接入，本阶段只完成前端选择、模板下载和材料上传入口。' }}</p>
+        </div>
+      </div>
     </section>
   </div>
 </template>
