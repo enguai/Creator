@@ -1,7 +1,7 @@
 <script setup>
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 
-import { checkFormAutomationHealth, createFormAutomationJob, getFormAutomationJob } from '../api/forms'
+import { checkFormAutomationHealth, createFormAutomationJob, getFormAutomationJob, getWorkerTask } from '../api/forms'
 import { checkPayrollHealth, createPayrollJob, getPayrollJob } from '../api/payroll'
 
 const payrollFiles = [
@@ -28,7 +28,6 @@ const payrollFiles = [
 ]
 
 const roomTypes = [
-  { value: 'general', label: '暂不区分直播间' },
   { value: 'z4-neck', label: 'Z4 颈膜直播间' },
   { value: 'z2-eye', label: 'Z2 眼膜直播间' },
   { value: 'z3-polish', label: 'Z3 抛光直播间' },
@@ -56,7 +55,7 @@ const selectedFiles = reactive(
   }, {}),
 )
 
-const roomType = ref('general')
+const roomType = ref('z3-polish')
 const weekStart = ref('')
 const weekEnd = ref('')
 const isSubmitting = ref(false)
@@ -65,6 +64,7 @@ const job = ref(null)
 const apiHealth = ref({
   status: 'checking',
   message: '正在连接薪资计算后端...',
+  capabilities: null,
 })
 const automationType = ref('expense')
 const automationMessage = ref('')
@@ -83,8 +83,35 @@ const automationFiles = reactive({
   referenceImages: [],
   linkTxt: null,
 })
+const testDataForm = reactive({
+  testedAt: '',
+  liveRoom: 'soft-mask',
+  testerName: '',
+  adjustmentType: '',
+})
+const adjustmentImage = ref(null)
+const adjustmentImagePreview = ref('')
+const taskQueryId = ref('')
+const queriedTask = ref(null)
+const taskQueryError = ref('')
+const isTaskQuerying = ref(false)
+let taskQueryTimer = null
 
 const canSubmit = computed(() => payrollFiles.every((item) => selectedFiles[item.key]) && !isSubmitting.value)
+
+const payrollCapabilities = computed(() => apiHealth.value.capabilities || {})
+
+const payrollModeLabel = computed(() => {
+  const capabilities = payrollCapabilities.value
+  if (capabilities.backend === 'codex_worker') {
+    return capabilities.worker_token_configured
+      ? 'Codex Worker 队列模式 · 将按 live-payroll skill 生成正式薪资表'
+      : 'Codex Worker 队列模式 · 尚未配置 Worker Token'
+  }
+  return '薪资计算 Worker 尚未启用'
+})
+
+const payrollSummary = computed(() => job.value?.summary || {})
 
 const statusLabel = computed(() => {
   const labels = {
@@ -151,6 +178,25 @@ const automationWarnings = computed(() => (
   Array.isArray(automationSummary.value.warnings) ? automationSummary.value.warnings : []
 ))
 
+const queriedTaskOutcomeLabel = computed(() => {
+  const labels = {
+    processing: 'processing',
+    succeed: 'succeed',
+    failed: 'failed',
+  }
+  return labels[queriedTask.value?.outcome] || 'unknown'
+})
+
+const formattedTestDate = computed(() => {
+  if (!testDataForm.testedAt) return '请选择测试日期'
+
+  const [datePart, timePart = ''] = testDataForm.testedAt.split('T')
+  const [year, month, day] = datePart.split('-')
+  const [hour = '00', minute = '00'] = timePart.split(':')
+
+  return `${year}/${Number(month)}/${Number(day)}     ${hour}:${minute}`
+})
+
 function handleFileChange(key, event) {
   const [file] = event.target.files
   selectedFiles[key] = file || null
@@ -176,6 +222,36 @@ function handleAutomationFileChange(key, event) {
   automationFiles[key] = file || null
 }
 
+function setAdjustmentImage(file) {
+  adjustmentImage.value = file || null
+
+  if (adjustmentImagePreview.value) {
+    URL.revokeObjectURL(adjustmentImagePreview.value)
+    adjustmentImagePreview.value = ''
+  }
+
+  if (file) {
+    adjustmentImagePreview.value = URL.createObjectURL(file)
+  }
+}
+
+function handleAdjustmentImageChange(event) {
+  const [file] = event.target.files || []
+  setAdjustmentImage(file)
+}
+
+function handleAdjustmentImagePaste(event) {
+  const imageItem = Array.from(event.clipboardData?.items || []).find((item) => item.type.startsWith('image/'))
+  const pastedFile = imageItem?.getAsFile()
+
+  if (!pastedFile) return
+
+  const file = new File([pastedFile], pastedFile.name || '粘贴调整图示.png', {
+    type: pastedFile.type || 'image/png',
+  })
+  setAdjustmentImage(file)
+}
+
 function submitAutomationForm() {
   automationSubmitted.value = true
   automationMessage.value = automationSubmitReady.value ? '' : '请先补齐当前表格类型所需的上传材料。'
@@ -187,9 +263,70 @@ function wait(ms) {
   })
 }
 
+function clearTaskQueryTimer() {
+  if (taskQueryTimer) {
+    window.clearTimeout(taskQueryTimer)
+    taskQueryTimer = null
+  }
+}
+
+function formatTaskTime(value) {
+  if (!value) return '—'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return new Intl.DateTimeFormat('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).format(date)
+}
+
+async function loadWorkerTask(silent = false) {
+  const jobId = taskQueryId.value.trim()
+  const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+  clearTaskQueryTimer()
+
+  if (!uuidPattern.test(jobId)) {
+    queriedTask.value = null
+    taskQueryError.value = '请输入完整的任务 ID，例如 3aa95efb-5973-4877-8bee-baefa9851372。'
+    return
+  }
+
+  if (!silent) {
+    isTaskQuerying.value = true
+    taskQueryError.value = ''
+  }
+
+  try {
+    queriedTask.value = await getWorkerTask(jobId)
+    taskQueryError.value = ''
+    if (queriedTask.value.outcome === 'processing') {
+      taskQueryTimer = window.setTimeout(() => loadWorkerTask(true), 3000)
+    }
+  } catch (error) {
+    taskQueryError.value = error.message || '任务查询失败，请稍后重试。'
+    if (!silent) queriedTask.value = null
+  } finally {
+    if (!silent) isTaskQuerying.value = false
+  }
+}
+
+function queryWorkerTask() {
+  return loadWorkerTask(false)
+}
+
+function downloadQueriedTask() {
+  if (!queriedTask.value?.download_url) return
+  window.location.href = new URL(queriedTask.value.download_url, window.location.origin).href
+}
+
 async function pollJobUntilFinished(jobId) {
-  for (let attempt = 0; attempt < 60; attempt += 1) {
-    await wait(1500)
+  for (let attempt = 0; attempt < 240; attempt += 1) {
+    await wait(3000)
     const latestJob = await getPayrollJob(jobId)
     job.value = latestJob
 
@@ -212,7 +349,7 @@ async function pollFormAutomationJobUntilFinished(jobId) {
     }
   }
 
-  throw new Error('处理时间较长，请稍后刷新页面或重新提交。')
+  throw new Error('薪资计算时间较长，请稍后刷新页面查看任务结果。')
 }
 
 async function submitPayrollJob() {
@@ -315,11 +452,13 @@ onMounted(async () => {
     apiHealth.value = {
       status: 'ok',
       message: health.message || '薪资计算后端已连接。',
+      capabilities: health.capabilities || null,
     }
   } catch (error) {
     apiHealth.value = {
       status: 'error',
       message: error.message || '无法连接到薪资计算后端。',
+      capabilities: null,
     }
   }
 
@@ -336,6 +475,13 @@ onMounted(async () => {
       message: error.message || '无法连接到报销表格自动化后端。',
       capabilities: null,
     }
+  }
+})
+
+onBeforeUnmount(() => {
+  clearTaskQueryTimer()
+  if (adjustmentImagePreview.value) {
+    URL.revokeObjectURL(adjustmentImagePreview.value)
   }
 })
 
@@ -375,8 +521,181 @@ watch(automationType, () => {
               <strong>报销表格自动化</strong>
               <small>选择表格类型，下载模板并上传生成材料。</small>
             </li>
+            <li>
+              <strong>自动化记录测试数据</strong>
+              <small>填写测试日期、直播间、测试人员和调整图示。</small>
+            </li>
+            <li>
+              <strong>Worker 任务查询</strong>
+              <small>通过任务 ID 查询处理进度、结果和失败原因。</small>
+            </li>
           </ul>
         </div>
+      </div>
+    </section>
+
+    <section class="section container tool-module task-query-module">
+      <div class="tool-module-heading">
+        <div>
+          <p class="eyebrow">WORKER TASKS</p>
+          <h2>任务进度查询</h2>
+          <p>输入报销表格或兼职薪资任务的完整 ID，系统会自动刷新正在处理的任务。</p>
+        </div>
+      </div>
+
+      <div class="task-query-panel">
+        <form class="task-query-form" @submit.prevent="queryWorkerTask">
+          <label for="worker-task-id">任务 ID</label>
+          <div>
+            <input
+              id="worker-task-id"
+              v-model.trim="taskQueryId"
+              type="text"
+              autocomplete="off"
+              placeholder="例如：3aa95efb-5973-4877-8bee-baefa9851372"
+            />
+            <button class="primary-button" type="submit" :disabled="isTaskQuerying">
+              {{ isTaskQuerying ? '查询中...' : '查询任务' }}
+            </button>
+          </div>
+          <p v-if="taskQueryError" class="task-query-error">{{ taskQueryError }}</p>
+        </form>
+
+        <article v-if="queriedTask" class="task-query-result">
+          <div class="task-query-result-heading">
+            <div>
+              <span>{{ queriedTask.task_label }}</span>
+              <strong>{{ queriedTask.id }}</strong>
+            </div>
+            <b :class="`is-${queriedTask.outcome}`">{{ queriedTaskOutcomeLabel }}</b>
+          </div>
+
+          <div class="task-progress" :class="`is-${queriedTask.outcome}`">
+            <div>
+              <span>{{ queriedTask.progress_message || queriedTask.status_label }}</span>
+              <b>{{ queriedTask.progress }}%</b>
+            </div>
+            <progress :value="queriedTask.progress" max="100">{{ queriedTask.progress }}%</progress>
+          </div>
+
+          <dl class="task-query-details">
+            <div>
+              <dt>当前状态</dt>
+              <dd>{{ queriedTask.status_label }}</dd>
+            </div>
+            <div>
+              <dt>处理次数</dt>
+              <dd>{{ queriedTask.attempt_count }} 次</dd>
+            </div>
+            <div>
+              <dt>提交时间</dt>
+              <dd>{{ formatTaskTime(queriedTask.created_at) }}</dd>
+            </div>
+            <div>
+              <dt>最后更新</dt>
+              <dd>{{ formatTaskTime(queriedTask.updated_at) }}</dd>
+            </div>
+          </dl>
+
+          <div v-if="queriedTask.files?.length" class="task-query-files">
+            <span>任务文件</span>
+            <ul>
+              <li v-for="file in queriedTask.files" :key="`${file.group || file.field}-${file.name}`">
+                {{ file.label }}：{{ file.name }}
+              </li>
+            </ul>
+          </div>
+
+          <p v-if="queriedTask.outcome === 'failed'" class="task-query-error">
+            {{ queriedTask.error_message || '任务处理失败，请检查材料后重新提交。' }}
+          </p>
+          <button
+            v-if="queriedTask.outcome === 'succeed'"
+            class="download-button"
+            type="button"
+            @click="downloadQueriedTask"
+          >
+            下载任务结果
+          </button>
+        </article>
+      </div>
+    </section>
+
+    <section class="section container tool-module">
+      <div class="tool-module-heading">
+        <div>
+          <p class="eyebrow">TEST DATA</p>
+          <h2>自动化记录测试数据</h2>
+          <p>
+            先完成测试基础信息录入，包含测试日期、直播间、测试人员、调整类型和调整图示。
+            后续记录保存、统计或自动化处理逻辑可以继续接在这个模块上。
+          </p>
+        </div>
+      </div>
+
+      <div class="test-data-panel">
+        <form class="test-data-form">
+          <label>
+            <span>测试日期</span>
+            <input v-model="testDataForm.testedAt" type="datetime-local" />
+            <small>当前格式：{{ formattedTestDate }}</small>
+          </label>
+
+          <label>
+            <span>直播间</span>
+            <select v-model="testDataForm.liveRoom">
+              <option value="soft-mask">软膜</option>
+              <option value="polishing">抛光</option>
+              <option value="eye-mask">眼膜</option>
+            </select>
+          </label>
+
+          <label>
+            <span>测试人员</span>
+            <input v-model.trim="testDataForm.testerName" type="text" placeholder="请输入测试人员名字" />
+          </label>
+
+          <label>
+            <span>调整类型</span>
+            <input v-model.trim="testDataForm.adjustmentType" type="text" placeholder="请输入具体调整的类型" />
+          </label>
+
+          <label class="test-image-upload" tabindex="0" @paste.prevent="handleAdjustmentImagePaste">
+            <input type="file" accept="image/*" @change="handleAdjustmentImageChange" />
+            <span>调整图示</span>
+            <strong>{{ adjustmentImage?.name || '点击上传图片，或聚焦后直接粘贴图片' }}</strong>
+            <small v-if="adjustmentImage">{{ formatFileSize(adjustmentImage) }}</small>
+            <p>支持 PNG、JPG、JPEG、WEBP 等常见图片格式。</p>
+          </label>
+        </form>
+
+        <aside class="test-data-preview">
+          <p class="eyebrow">PREVIEW</p>
+          <h3>当前填写内容</h3>
+          <dl>
+            <div>
+              <dt>测试日期</dt>
+              <dd>{{ formattedTestDate }}</dd>
+            </div>
+            <div>
+              <dt>直播间</dt>
+              <dd>{{ testDataForm.liveRoom === 'soft-mask' ? '软膜' : testDataForm.liveRoom === 'polishing' ? '抛光' : '眼膜' }}</dd>
+            </div>
+            <div>
+              <dt>测试人员</dt>
+              <dd>{{ testDataForm.testerName || '未填写' }}</dd>
+            </div>
+            <div>
+              <dt>调整类型</dt>
+              <dd>{{ testDataForm.adjustmentType || '未填写' }}</dd>
+            </div>
+          </dl>
+
+          <div class="test-image-preview">
+            <img v-if="adjustmentImagePreview" :src="adjustmentImagePreview" alt="调整图示预览" />
+            <span v-else>尚未上传调整图示</span>
+          </div>
+        </aside>
       </div>
     </section>
 
@@ -386,13 +705,14 @@ watch(automationType, () => {
           <p class="eyebrow">PAYROLL WORKFLOW</p>
           <h2>兼职薪资计算</h2>
           <p>
-            先把主播排班、场控排班、试播间排班和主播数据上传到后台。当前版本先打通上传与下载闭环，
-            下一步会接入和 work01 薪资项目一致的真实计算规则。
+            上传主播排班、场控排班、试播间排班和主播数据后，任务会进入 Windows Codex Worker 队列，
+            按 live-payroll 规则生成对应直播间的正式薪资表，并在完成后提供下载。
           </p>
         </div>
         <div class="payroll-api-status" :class="`is-${apiHealth.status}`">
           <b>{{ apiHealthLabel }}</b>
           <small>{{ apiHealth.message }}</small>
+          <small v-if="apiHealth.status === 'ok'">{{ payrollModeLabel }}</small>
         </div>
       </div>
 
@@ -403,7 +723,7 @@ watch(automationType, () => {
               <p class="eyebrow">UPLOAD FILES</p>
               <h3>上传计算薪资所需信息</h3>
             </div>
-            <small>支持 Excel、CSV、PDF、图片等常见文件格式。</small>
+            <small>支持 Excel、CSV、PDF、图片等常见文件格式；单次提交总上传上限 200MB。</small>
           </div>
 
           <div class="payroll-options">
@@ -464,7 +784,7 @@ watch(automationType, () => {
 
           <div v-if="!job" class="result-empty">
             <span>尚未提交</span>
-            <p>上传四个文件后点击提交，后台会生成一个测试薪资文档。</p>
+            <p>上传四个文件后点击提交，Windows Worker 会按规则生成可下载的薪资表。</p>
           </div>
 
           <div v-else class="payroll-job">
@@ -483,15 +803,34 @@ watch(automationType, () => {
               </div>
             </dl>
 
+            <div class="task-progress" :class="`is-${job.status === 'success' ? 'succeed' : job.status === 'failed' ? 'failed' : 'processing'}`">
+              <div>
+                <span>{{ job.progress_message || statusLabel }}</span>
+                <b>{{ job.progress ?? 0 }}%</b>
+              </div>
+              <progress :value="job.progress ?? 0" max="100">{{ job.progress ?? 0 }}%</progress>
+            </div>
+
             <p v-if="job.status === 'success'" class="payroll-success">
-              测试文档已生成，可以下载到本地查看。
+              薪资表已生成并通过 Worker 校验，可以下载到本地查看。
             </p>
             <p v-if="job.status === 'failed'" class="payroll-error">
               {{ job.error_message || '计算失败，请检查上传文件后重试。' }}
             </p>
 
+            <dl v-if="payrollSummary.mode === 'codex-skill-worker'" class="payroll-job-summary">
+              <div>
+                <dt>处理方式</dt>
+                <dd>{{ job.status === 'success' ? 'Codex Worker 已调用 live-payroll skill' : '等待 Codex Worker 调用 live-payroll skill' }}</dd>
+              </div>
+              <div v-if="payrollSummary.duration_seconds">
+                <dt>处理耗时</dt>
+                <dd>{{ payrollSummary.duration_seconds }} 秒</dd>
+              </div>
+            </dl>
+
             <button class="download-button" type="button" :disabled="job.status !== 'success'" @click="downloadResult">
-              下载薪资文档
+              下载薪资表
             </button>
           </div>
         </aside>
@@ -589,6 +928,8 @@ watch(automationType, () => {
             </label>
           </div>
 
+          <p class="automation-upload-note">单次提交总上传上限 200MB；如果图片较多，建议先压缩后再上传。</p>
+
           <div class="automation-actions">
             <button type="button" class="secondary-button" :disabled="isAutomationSubmitting" @click="submitAutomationJob">
               {{ isAutomationSubmitting ? '正在提交...' : '提交' }}
@@ -668,6 +1009,18 @@ watch(automationType, () => {
               </dd>
             </div>
           </dl>
+
+          <div
+            v-if="automationJob"
+            class="task-progress"
+            :class="`is-${automationJob.status === 'success' ? 'succeed' : automationJob.status === 'failed' ? 'failed' : 'processing'}`"
+          >
+            <div>
+              <span>{{ automationJob.progress_message || automationStatusLabel }}</span>
+              <b>{{ automationJob.progress ?? 0 }}%</b>
+            </div>
+            <progress :value="automationJob.progress ?? 0" max="100">{{ automationJob.progress ?? 0 }}%</progress>
+          </div>
 
           <div v-if="automationWarnings.length" class="automation-warning-box">
             <strong>识别提示</strong>

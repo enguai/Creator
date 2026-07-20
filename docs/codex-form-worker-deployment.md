@@ -87,11 +87,24 @@ $env:CODEX_BIN = "codex"
 $env:CODEX_WORKER_ROOT = "C:\CreatorCodexWorker"
 $env:CODEX_WORKER_POLL_SECONDS = "10"
 $env:CODEX_WORKER_TIMEOUT_SECONDS = "1800"
+$env:CODEX_WORKER_HEARTBEAT_SECONDS = "30"
+$env:CODEX_WORKER_LOCAL_RETENTION_DAYS = "7"
+$env:CODEX_WORKER_MIN_FREE_GB = "2"
 
 .\.venv\Scripts\python.exe scripts\codex_form_worker.py
 ```
 
-如果 PowerShell 提示 `codex` 无法运行，说明当前 Windows 环境没有可用于命令行的 Codex CLI。需要先让 `codex exec` 能正常运行，再启动 Worker。
+如果 PowerShell 提示 `codex` 无法运行或 `Access is denied`，先查找真实 Codex CLI：
+
+```powershell
+Get-ChildItem "$env:LOCALAPPDATA\OpenAI\Codex\bin" -Recurse -Filter codex.exe
+```
+
+然后把 `$env:CODEX_BIN` 改成查到的完整路径，例如：
+
+```powershell
+$env:CODEX_BIN = "C:\Users\Administrator\AppData\Local\OpenAI\Codex\bin\ea1c60319a1dcb19\codex.exe"
+```
 
 单次测试模式：
 
@@ -104,15 +117,33 @@ $env:CODEX_WORKER_RUN_ONCE = "1"
 
 1. 用户在网站上传材料并提交。
 2. Django 创建 `pending` 任务。
-3. Windows Worker 调用 `/api/forms/worker/jobs/next/` 领取任务。
+3. Windows Worker 通过原子操作领取任务，并取得仅属于本次处理的领取令牌。
 4. Worker 下载所有材料到本地任务目录。
-5. Worker 调用：
+5. Worker 每 30 秒上报心跳，并按处理阶段更新百分比；心跳超时的任务最多自动重试 3 次。
+6. Worker 调用：
 
    ```powershell
    codex exec --cd <job-dir> --sandbox danger-full-access --ask-for-approval never --skip-git-repo-check --output-last-message <file> "请读取并执行 task.md 中的后台任务。"
    ```
 
-6. Codex 使用 `$expense-procurement-forms` 生成 Excel。
-7. Worker 上传生成的 `.xlsx`。
-8. 网站状态变成 `success`，用户可以下载。
+7. Codex 使用 `$expense-procurement-forms` 生成 Excel。
+8. Worker 上传生成的 `.xlsx`，服务端只接受当前领取令牌对应的结果。
+9. 网站状态变成 `success`、进度变成 `100%`，用户可以下载。
 
+## 任务与文件清理
+
+Worker 本地任务目录默认保留 7 天，之后由 Worker 自动清理。Django 数据库中的任务记录、服务器上传材料和结果文件不会自动删除，避免历史任务在用户不知情时消失。
+
+先预览 90 天以前可清理的成功或失败任务：
+
+```powershell
+.\.venv\Scripts\python.exe manage.py cleanup_worker_jobs --days 90 --dry-run
+```
+
+确认后执行清理：
+
+```powershell
+.\.venv\Scripts\python.exe manage.py cleanup_worker_jobs --days 90
+```
+
+建议每月执行一次。`pending` 和 `running` 任务不会被这个命令删除。

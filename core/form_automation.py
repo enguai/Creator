@@ -769,6 +769,12 @@ def form_automation_capabilities():
         'ai_configured': bool(setting_or_env('OPENAI_API_KEY')),
         'openai_model': setting_or_env('OPENAI_MODEL', 'gpt-5.4-mini') if setting_or_env('OPENAI_API_KEY') else '',
         'work05_generator': str(work05_generator_path() or ''),
+        'review_fallback_enabled': setting_or_env('FORM_AUTOMATION_ALLOW_REVIEW_FALLBACK', '').lower() in {
+            '1',
+            'true',
+            'yes',
+            'on',
+        },
     }
 
 

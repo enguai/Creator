@@ -69,12 +69,25 @@ class PayrollJob(models.Model):
     trial_schedule = models.FileField(upload_to=payroll_trial_schedule_path)
     host_data = models.FileField(upload_to=payroll_host_data_path)
     result_file = models.FileField(upload_to=payroll_output_path, blank=True)
+    summary = models.JSONField(default=dict, blank=True)
+    progress = models.PositiveSmallIntegerField(default=0)
+    progress_message = models.CharField(max_length=200, default='等待 Worker 处理')
+    worker_id = models.CharField(max_length=120, blank=True)
+    claim_token = models.UUIDField(null=True, blank=True, editable=False)
+    lease_expires_at = models.DateTimeField(null=True, blank=True)
+    attempt_count = models.PositiveSmallIntegerField(default=0)
+    started_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
     error_message = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['status', 'created_at'], name='payroll_status_created_idx'),
+            models.Index(fields=['status', 'lease_expires_at'], name='payroll_status_lease_idx'),
+        ]
 
     def __str__(self):
         return f'Payroll job {self.id} ({self.status})'
@@ -100,12 +113,24 @@ class FormAutomationJob(models.Model):
     )
     result_file = models.FileField(upload_to=form_output_path, blank=True)
     summary = models.JSONField(default=dict, blank=True)
+    progress = models.PositiveSmallIntegerField(default=0)
+    progress_message = models.CharField(max_length=200, default='等待 Worker 处理')
+    worker_id = models.CharField(max_length=120, blank=True)
+    claim_token = models.UUIDField(null=True, blank=True, editable=False)
+    lease_expires_at = models.DateTimeField(null=True, blank=True)
+    attempt_count = models.PositiveSmallIntegerField(default=0)
+    started_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
     error_message = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['status', 'created_at'], name='form_status_created_idx'),
+            models.Index(fields=['status', 'lease_expires_at'], name='form_status_lease_idx'),
+        ]
 
     def __str__(self):
         return f'Form automation job {self.id} ({self.form_type}, {self.status})'

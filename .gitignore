@@ -6,6 +6,7 @@ media/
 *.log
 .env
 .env.*
+start_codex_form_worker.ps1
 
 frontend/node_modules/
 frontend/dist/

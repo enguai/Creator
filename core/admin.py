@@ -11,10 +11,10 @@ class ProfileAdmin(admin.ModelAdmin):
 
 @admin.register(PayrollJob)
 class PayrollJobAdmin(admin.ModelAdmin):
-    list_display = ('id', 'room_type', 'week_start', 'week_end', 'status', 'created_at', 'updated_at')
+    list_display = ('id', 'room_type', 'status', 'progress', 'attempt_count', 'worker_id', 'created_at', 'updated_at')
     list_filter = ('status', 'room_type', 'created_at')
     search_fields = ('id', 'error_message')
-    readonly_fields = ('id', 'created_at', 'updated_at')
+    readonly_fields = ('id', 'claim_token', 'created_at', 'updated_at')
 
 
 class FormAutomationAssetInline(admin.TabularInline):
@@ -25,8 +25,8 @@ class FormAutomationAssetInline(admin.TabularInline):
 
 @admin.register(FormAutomationJob)
 class FormAutomationJobAdmin(admin.ModelAdmin):
-    list_display = ('id', 'form_type', 'status', 'created_at', 'updated_at')
+    list_display = ('id', 'form_type', 'status', 'progress', 'attempt_count', 'worker_id', 'created_at', 'updated_at')
     list_filter = ('status', 'form_type', 'created_at')
     search_fields = ('id', 'error_message')
-    readonly_fields = ('id', 'created_at', 'updated_at')
+    readonly_fields = ('id', 'claim_token', 'created_at', 'updated_at')
     inlines = (FormAutomationAssetInline,)

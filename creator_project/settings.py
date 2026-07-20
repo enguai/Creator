@@ -132,9 +132,11 @@ STATIC_URL = 'static/'
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 
-# Payroll uploads can contain several screenshots and spreadsheets.
-DATA_UPLOAD_MAX_MEMORY_SIZE = 30 * 1024 * 1024
-FILE_UPLOAD_MAX_MEMORY_SIZE = 30 * 1024 * 1024
+# Payroll and form automation uploads can contain several screenshots,
+# spreadsheets, PDFs, and invoice files. Keep this aligned with Nginx
+# client_max_body_size.
+DATA_UPLOAD_MAX_MEMORY_SIZE = 200 * 1024 * 1024
+FILE_UPLOAD_MAX_MEMORY_SIZE = 200 * 1024 * 1024
 
 # SimpleUI admin branding (admin language follows LANGUAGE_CODE above).
 SIMPLEUI_HOME_INFO = False
