@@ -29,6 +29,7 @@ from __future__ import annotations
 import json
 import mimetypes
 import os
+from datetime import datetime
 from pathlib import Path
 import re
 import shlex
@@ -42,6 +43,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+from zoneinfo import ZoneInfo
 
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
@@ -332,6 +334,14 @@ def safe_filename(name: str) -> str:
     return name or f"file-{uuid.uuid4().hex}"
 
 
+def form_result_filename(form_type: str, current_time: datetime | None = None) -> str:
+    local_time = current_time or datetime.now(ZoneInfo("Asia/Shanghai"))
+    if local_time.tzinfo is not None:
+        local_time = local_time.astimezone(ZoneInfo("Asia/Shanghai"))
+    prefix = "费用报销表" if form_type == "expense" else "采购申请表"
+    return f"{prefix}{local_time.month}.{local_time.day}.xlsx"
+
+
 def download_asset(asset: dict, job_dir: Path) -> Path:
     group = safe_filename(asset["group"])
     target_dir = job_dir / "input" / group
@@ -601,11 +611,10 @@ def run_codex(
     local_assets: list[tuple[dict, Path]],
     reporter: HeartbeatReporter,
     *,
+    output_path: Path,
     normalize_workbook: bool,
 ) -> tuple[Path, dict]:
-    output_dir = job_dir / "output"
-    output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = output_dir / "result.xlsx"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     prompt_path = job_dir / "task.md"
     final_message_path = job_dir / "codex-final-message.md"
     stdout_path = job_dir / "codex-stdout.log"
@@ -690,7 +699,7 @@ def run_codex(
         )
     if not output_path.exists():
         raise WorkerError(
-            "Codex 已结束，但没有生成指定的 output/result.xlsx。"
+            f"Codex 已结束，但没有生成指定的 {output_path.name}。"
             f"最终消息：{final_message_path.read_text(encoding='utf-8', errors='ignore')[-2000:] if final_message_path.exists() else ''}"
         )
 
@@ -700,7 +709,7 @@ def run_codex(
     normalize_summary = (
         normalize_generated_workbook(output_path, job_dir)
         if normalize_workbook
-        else {"workbook_normalized": False, "normalize_reason": "preserved live-payroll workbook formatting"}
+        else {"workbook_normalized": False, "normalize_reason": "preserved skill-generated workbook"}
     )
     reporter.update(92, "结果文件已就绪，准备上传")
 
@@ -766,11 +775,18 @@ def process_form_job(job_payload: dict, reporter: HeartbeatReporter) -> None:
 
     print(f"[worker] 领取报销表格任务 {job['id']} ({job['form_type']})")
     local_assets = download_job_assets(job_payload, job_dir, reporter)
-    output_path = job_dir / "output" / "result.xlsx"
+    output_path = job_dir / "output" / form_result_filename(job["form_type"])
     reporter.update(30, "任务文件已就绪，正在准备 Codex")
     prompt = build_prompt(job_payload, local_assets, output_path)
 
-    result_path, summary = run_codex(job_dir, prompt, local_assets, reporter, normalize_workbook=True)
+    result_path, summary = run_codex(
+        job_dir,
+        prompt,
+        local_assets,
+        reporter,
+        output_path=output_path,
+        normalize_workbook=False,
+    )
     reporter.update(96, "正在上传结果文件")
     reporter.stop()
     reporter.ensure_active()
@@ -789,7 +805,14 @@ def process_payroll_job(job_payload: dict, reporter: HeartbeatReporter) -> None:
     reporter.update(30, "任务文件已就绪，正在准备 Codex")
     prompt = build_payroll_prompt(job_payload, local_assets, output_path)
 
-    result_path, summary = run_codex(job_dir, prompt, local_assets, reporter, normalize_workbook=False)
+    result_path, summary = run_codex(
+        job_dir,
+        prompt,
+        local_assets,
+        reporter,
+        output_path=output_path,
+        normalize_workbook=False,
+    )
     summary.update({"skill": "live-payroll", "room_type": job["room_type"]})
     reporter.update(96, "正在上传结果文件")
     reporter.stop()

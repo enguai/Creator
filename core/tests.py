@@ -2,6 +2,8 @@ import json
 import tempfile
 import uuid
 from datetime import timedelta
+from unittest.mock import patch
+from urllib.parse import unquote
 
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
@@ -166,6 +168,11 @@ class WorkerQueueTests(TestCase):
         self.assertEqual(job.progress_message, '处理成功')
         self.assertIsNone(job.claim_token)
 
+        download = self.client.get(reverse('form-automation-job-download', args=[job.id]))
+        self.assertEqual(download.status_code, 200)
+        self.assertIn('费用报销表', unquote(download.headers['Content-Disposition']))
+        download.close()
+
     def test_unified_task_query_supports_payroll_jobs(self):
         job = self.create_payroll_job()
         claimed = self.post_json(
@@ -183,3 +190,22 @@ class WorkerQueueTests(TestCase):
         self.assertEqual(payload['progress'], 5)
         self.assertEqual(payload['attempt_count'], 1)
         self.assertEqual(len(payload['files']), 4)
+
+    @override_settings(CREATOR_CLOUD_SERVER_URL='http://cloud.example')
+    @patch('core.views.get_cloud_worker_task')
+    def test_unified_task_query_falls_back_to_cloud(self, get_cloud_worker_task):
+        job_id = uuid.uuid4()
+        get_cloud_worker_task.return_value = {
+            'id': str(job_id),
+            'status': 'success',
+            'progress': 100,
+            'download_url': 'http://cloud.example/api/forms/result/download/',
+            'task_source': 'cloud',
+        }
+
+        response = self.client.get(reverse('worker-task-detail', args=[job_id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['id'], str(job_id))
+        self.assertEqual(response.json()['task_source'], 'cloud')
+        get_cloud_worker_task.assert_called_once()

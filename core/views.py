@@ -3,6 +3,10 @@ import json
 import os
 import uuid
 from datetime import timedelta
+from urllib.error import HTTPError, URLError
+from urllib.parse import urljoin, urlparse
+from urllib.request import Request, urlopen
+from zoneinfo import ZoneInfo
 
 from django.conf import settings
 from django.core.exceptions import RequestDataTooBig
@@ -377,8 +381,42 @@ def serialize_form_automation_job(job):
     }
 
 
+def form_automation_result_filename(job):
+    completed_at = job.finished_at or job.updated_at or timezone.now()
+    local_date = timezone.localtime(completed_at, ZoneInfo('Asia/Shanghai'))
+    prefix = '费用报销表' if job.form_type == FormAutomationJob.FormType.EXPENSE else '采购申请表'
+    return f'{prefix}{local_date.month}.{local_date.day}.xlsx'
+
+
+class CloudTaskLookupError(RuntimeError):
+    pass
+
+
+def get_cloud_worker_task(request, job_id):
+    base_url = setting_or_env('CREATOR_CLOUD_SERVER_URL', '').strip().rstrip('/')
+    if not base_url or urlparse(base_url).netloc.lower() == request.get_host().lower():
+        return None
+
+    task_url = f'{base_url}/api/tasks/{job_id}/'
+    try:
+        with urlopen(Request(task_url, headers={'Accept': 'application/json'}), timeout=8) as response:
+            payload = json.loads(response.read().decode('utf-8'))
+    except HTTPError as exc:
+        if exc.code == 404:
+            return None
+        raise CloudTaskLookupError(f'云端任务接口返回 HTTP {exc.code}') from exc
+    except (OSError, URLError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise CloudTaskLookupError('无法连接云端任务接口') from exc
+
+    download_url = payload.get('download_url', '')
+    if download_url:
+        payload['download_url'] = urljoin(f'{base_url}/', download_url)
+    payload['task_source'] = 'cloud'
+    return payload
+
+
 @require_GET
-def get_worker_task(_request, job_id):
+def get_worker_task(request, job_id):
     try:
         job = FormAutomationJob.objects.prefetch_related('assets').get(id=job_id)
         serialized = serialize_form_automation_job(job)
@@ -388,8 +426,17 @@ def get_worker_task(_request, job_id):
         try:
             job = PayrollJob.objects.get(id=job_id)
         except PayrollJob.DoesNotExist:
+            try:
+                cloud_task = get_cloud_worker_task(request, job_id)
+            except CloudTaskLookupError as exc:
+                return api_response(
+                    {'error': 'cloud_task_lookup_failed', 'message': f'{exc}，请确认云端服务可访问。'},
+                    status=502,
+                )
+            if cloud_task is not None:
+                return api_response(cloud_task)
             return api_response(
-                {'error': 'task_not_found', 'message': '没有找到这个任务，请检查任务 ID 是否完整。'},
+                {'error': 'task_not_found', 'message': '本地和云端都没有找到这个任务，请检查任务 ID 是否完整。'},
                 status=404,
             )
         serialized = serialize_payroll_job(job)
@@ -427,6 +474,7 @@ def get_worker_task(_request, job_id):
             'error_message': job.error_message,
             'download_url': serialized['download_url'],
             'files': serialized['files'],
+            'task_source': 'local',
         }
     )
 
@@ -984,7 +1032,7 @@ def download_form_automation_result(_request, job_id):
         response = FileResponse(
             job.result_file.open('rb'),
             as_attachment=True,
-            filename=job.result_file.name.split('/')[-1],
+            filename=form_automation_result_filename(job),
         )
     except FileNotFoundError as exc:
         raise Http404('Form automation result file was not found.') from exc

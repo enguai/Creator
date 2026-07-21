@@ -96,6 +96,7 @@ const queriedTask = ref(null)
 const taskQueryError = ref('')
 const isTaskQuerying = ref(false)
 let taskQueryTimer = null
+let componentUnmounted = false
 
 const canSubmit = computed(() => payrollFiles.every((item) => selectedFiles[item.key]) && !isSubmitting.value)
 
@@ -302,14 +303,24 @@ async function loadWorkerTask(silent = false) {
   }
 
   try {
-    queriedTask.value = await getWorkerTask(jobId)
+    const latestTask = await getWorkerTask(jobId)
+    queriedTask.value = latestTask
+    if (automationJob.value?.id === latestTask.id) {
+      automationJob.value = { ...automationJob.value, ...latestTask }
+    }
+    if (job.value?.id === latestTask.id) {
+      job.value = { ...job.value, ...latestTask }
+    }
     taskQueryError.value = ''
-    if (queriedTask.value.outcome === 'processing') {
+    if (latestTask.outcome === 'processing') {
       taskQueryTimer = window.setTimeout(() => loadWorkerTask(true), 3000)
     }
   } catch (error) {
     taskQueryError.value = error.message || '任务查询失败，请稍后重试。'
     if (!silent) queriedTask.value = null
+    if (silent && queriedTask.value?.outcome === 'processing') {
+      taskQueryTimer = window.setTimeout(() => loadWorkerTask(true), 3000)
+    }
   } finally {
     if (!silent) isTaskQuerying.value = false
   }
@@ -325,31 +336,41 @@ function downloadQueriedTask() {
 }
 
 async function pollJobUntilFinished(jobId) {
-  for (let attempt = 0; attempt < 240; attempt += 1) {
+  while (!componentUnmounted) {
     await wait(3000)
-    const latestJob = await getPayrollJob(jobId)
-    job.value = latestJob
+    if (componentUnmounted) return null
 
-    if (['success', 'failed'].includes(latestJob.status)) {
-      return latestJob
+    try {
+      const latestJob = await getPayrollJob(jobId)
+      job.value = latestJob
+
+      if (['success', 'failed'].includes(latestJob.status)) {
+        return latestJob
+      }
+    } catch {
+      // Keep the last confirmed state and retry after a temporary network failure.
     }
   }
-
-  throw new Error('计算时间较长，请稍后刷新页面或重新提交。')
+  return null
 }
 
 async function pollFormAutomationJobUntilFinished(jobId) {
-  for (let attempt = 0; attempt < 240; attempt += 1) {
+  while (!componentUnmounted) {
     await wait(3000)
-    const latestJob = await getFormAutomationJob(jobId)
-    automationJob.value = latestJob
+    if (componentUnmounted) return null
 
-    if (['success', 'failed'].includes(latestJob.status)) {
-      return latestJob
+    try {
+      const latestJob = await getFormAutomationJob(jobId)
+      automationJob.value = latestJob
+
+      if (['success', 'failed'].includes(latestJob.status)) {
+        return latestJob
+      }
+    } catch {
+      // Worker tasks can outlive a browser request; continue polling the same task.
     }
   }
-
-  throw new Error('薪资计算时间较长，请稍后刷新页面查看任务结果。')
+  return null
 }
 
 async function submitPayrollJob() {
@@ -479,6 +500,7 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  componentUnmounted = true
   clearTaskQueryTimer()
   if (adjustmentImagePreview.value) {
     URL.revokeObjectURL(adjustmentImagePreview.value)
