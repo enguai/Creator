@@ -305,10 +305,9 @@ def cleanup_local_job_cache(root: Path) -> int:
                 continue
             try:
                 uuid.UUID(job_dir.name)
-                latest_mtime = max(
-                    (path.stat().st_mtime for path in [job_dir, *job_dir.rglob("*")]),
-                    default=job_dir.stat().st_mtime,
-                )
+                # Completed jobs touch their root directory. Avoid traversing the
+                # node_modules junction, which can contain stale package links.
+                latest_mtime = job_dir.stat().st_mtime
                 if latest_mtime < cutoff:
                     shutil.rmtree(job_dir)
                     removed += 1
