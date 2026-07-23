@@ -705,6 +705,19 @@ main { overflow: hidden; }
   font-size: 13px;
   line-height: 1.8;
 }
+
+.live-monitor-entry {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 60px;
+  padding-block: 58px;
+  border-bottom: 1px solid var(--line);
+}
+.live-monitor-entry .eyebrow { margin-bottom: 14px; }
+.live-monitor-entry h2 { margin-bottom: 12px; font-family: var(--serif); font-size: 36px; font-weight: 400; }
+.live-monitor-entry p:last-child { max-width: 680px; margin: 0; color: var(--muted); font-size: 14px; line-height: 1.8; }
+.live-monitor-entry .primary-button { flex: 0 0 auto; }
 .payroll-hero-card strong {
   display: block;
   margin: 22px 0 16px;

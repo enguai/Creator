@@ -10,7 +10,8 @@ from django.test import TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 
-from .models import FormAutomationJob, PayrollJob
+from .douyin_monitor import matches_rule, parse_compact_number, validate_config
+from .models import DouyinMonitorSession, FormAutomationJob, PayrollJob
 
 
 class WorkerQueueTests(TestCase):
@@ -209,3 +210,64 @@ class WorkerQueueTests(TestCase):
         self.assertEqual(response.json()['id'], str(job_id))
         self.assertEqual(response.json()['task_source'], 'cloud')
         get_cloud_worker_task.assert_called_once()
+
+
+class DouyinMonitorTests(TestCase):
+    def test_rule_validation_and_compact_counts_match_desktop_app(self):
+        self.assertTrue(matches_rule(101, {'mode': 'greater', 'threshold': 100}))
+        self.assertFalse(matches_rule(100, {'mode': 'greater', 'threshold': 100}))
+        self.assertEqual(parse_compact_number('1.2万'), 12000)
+        self.assertEqual(parse_compact_number('1,234'), 1234)
+        self.assertFalse(validate_config({'enabled': True, 'webhook': 'http://example.com'})[0])
+        self.assertFalse(validate_config({'mode': 'range', 'min': 10, 'max': 5})[0])
+
+    def test_empty_monitor_input_is_rejected_without_creating_a_session(self):
+        response = self.client.post(
+            reverse('douyin-monitor-start'),
+            data=json.dumps({'douyinId': ''}),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(response.json()['ok'])
+        self.assertEqual(DouyinMonitorSession.objects.count(), 0)
+
+    def test_config_export_and_log_deletion(self):
+        self.client.get(reverse('douyin-monitor-state'))
+        session = DouyinMonitorSession.objects.create(
+            douyin_id='creator-test',
+            room_title='测试直播间',
+            status=DouyinMonitorSession.Status.MONITORING,
+            current_count=88,
+            points=[{'time': 1000, 'count': 88}],
+            alerts=[{'time': 2000, 'count': 76, 'status': 'sent'}],
+        )
+        config_response = self.client.put(
+            reverse('douyin-monitor-config', args=[session.id]),
+            data=json.dumps({
+                'enabled': False,
+                'mode': 'range',
+                'min': 50,
+                'max': 100,
+                'cooldownEnabled': True,
+                'cooldownMinutes': 15,
+            }),
+            content_type='application/json',
+        )
+        self.assertEqual(config_response.status_code, 200)
+        self.assertEqual(config_response.json()['monitor']['config']['mode'], 'range')
+
+        export_response = self.client.get(reverse('douyin-monitor-log-export', args=[session.id]))
+        self.assertEqual(export_response.status_code, 200)
+        report_html = export_response.content.decode('utf-8')
+        self.assertIn('每15分钟', report_html)
+        self.assertIn('告警时间点', report_html)
+        self.assertIn('时间点在线人数', report_html)
+        self.assertIn('<details class="alert-history">', report_html)
+        self.assertIn('收起明细', report_html)
+        self.assertIn('"count": 76', report_html)
+
+        self.client.post(reverse('douyin-monitor-stop', args=[session.id]))
+        delete_response = self.client.delete(reverse('douyin-monitor-log-delete', args=[session.id]))
+        self.assertEqual(delete_response.status_code, 200)
+        self.assertFalse(DouyinMonitorSession.objects.filter(id=session.id).exists())

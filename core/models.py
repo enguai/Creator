@@ -149,3 +149,64 @@ class FormAutomationAsset(models.Model):
 
     def __str__(self):
         return f'{self.group}: {self.original_name}'
+
+
+class DouyinMonitorConfig(models.Model):
+    class Mode(models.TextChoices):
+        GREATER = 'greater', 'Greater than'
+        LESS = 'less', 'Less than'
+        RANGE = 'range', 'Range'
+
+    douyin_id = models.CharField(max_length=120, unique=True)
+    enabled = models.BooleanField(default=False)
+    mode = models.CharField(max_length=20, choices=Mode.choices, default=Mode.GREATER)
+    threshold = models.PositiveIntegerField(default=100)
+    min_count = models.PositiveIntegerField(default=50)
+    max_count = models.PositiveIntegerField(default=100)
+    cooldown_enabled = models.BooleanField(default=False)
+    cooldown_minutes = models.PositiveIntegerField(default=10)
+    webhook = models.TextField(blank=True)
+    secret = models.TextField(blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f'Douyin monitor config {self.douyin_id}'
+
+
+class DouyinMonitorSession(models.Model):
+    class Status(models.TextChoices):
+        STARTING = 'starting', 'Starting'
+        RESOLVING = 'resolving', 'Resolving'
+        CONNECTING = 'connecting', 'Connecting'
+        MONITORING = 'monitoring', 'Monitoring'
+        WARNING = 'warning', 'Warning'
+        ERROR = 'error', 'Error'
+        STOPPED = 'stopped', 'Stopped'
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    douyin_id = models.CharField(max_length=120)
+    room_title = models.CharField(max_length=200, blank=True)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.STARTING)
+    status_message = models.CharField(max_length=300, default='正在建立独立匿名连接')
+    current_count = models.PositiveIntegerField(null=True, blank=True)
+    started_at = models.DateTimeField(auto_now_add=True)
+    ended_at = models.DateTimeField(null=True, blank=True)
+    end_reason = models.CharField(max_length=300, blank=True)
+    sec_uid = models.CharField(max_length=200, blank=True)
+    room_id = models.CharField(max_length=80, blank=True)
+    web_rid = models.CharField(max_length=80, blank=True)
+    stream_url = models.TextField(blank=True)
+    points = models.JSONField(default=list, blank=True)
+    alerts = models.JSONField(default=list, blank=True)
+    config = models.JSONField(default=dict, blank=True)
+    last_alert_at = models.DateTimeField(null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-started_at']
+        indexes = [
+            models.Index(fields=['status', 'started_at'], name='douyin_status_started_idx'),
+        ]
+
+    def __str__(self):
+        return f'Douyin monitor {self.douyin_id} ({self.status})'

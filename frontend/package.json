@@ -9,6 +9,8 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@lucide/vue": "^1.25.0",
+    "flv.js": "^1.6.2",
     "vue": "^3.5.39",
     "vue-router": "^4.6.4"
   },

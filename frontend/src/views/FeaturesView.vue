@@ -527,14 +527,18 @@ watch(automationType, () => {
           <p class="eyebrow">CREATOR TOOLS</p>
           <h1>功能中心</h1>
           <p>
-            这里会逐步沉淀造物者直播部门的内部效率工具。当前已规划兼职薪资计算和报销表格自动化，
-            后续还可以继续扩展数据统计、排班检查、素材管理等功能。
+            这里会逐步沉淀造物者直播部门的内部效率工具，覆盖直播监控、薪资计算、
+            表格自动化、测试记录和任务查询。
           </p>
         </div>
 
         <div class="features-overview-card">
           <span>AVAILABLE NOW</span>
           <ul>
+            <li>
+              <strong>直播间监控</strong>
+              <small>查看直播画面、在线人数曲线、飞书告警和监控日志。</small>
+            </li>
             <li>
               <strong>兼职薪资计算</strong>
               <small>上传排班和主播数据，生成薪资测试文档。</small>
@@ -554,6 +558,15 @@ watch(automationType, () => {
           </ul>
         </div>
       </div>
+    </section>
+
+    <section class="section container live-monitor-entry">
+      <div>
+        <p class="eyebrow">LIVE OPERATIONS</p>
+        <h2>直播间监控</h2>
+        <p>同时监控多个抖音直播间，实时查看画面、在线人数、告警状态与历史曲线。</p>
+      </div>
+      <RouterLink class="primary-button" to="/features/live-monitor">进入监控工作台</RouterLink>
     </section>
 
     <section class="section container tool-module task-query-module">

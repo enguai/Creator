@@ -1,9 +1,39 @@
 from django.urls import path
 
 from . import views
+from . import douyin_views
 
 
 urlpatterns = [
+    path('live-monitor/health/', douyin_views.monitor_health, name='douyin-monitor-health'),
+    path('live-monitor/state/', douyin_views.monitor_state, name='douyin-monitor-state'),
+    path('live-monitor/monitors/', douyin_views.start_monitor, name='douyin-monitor-start'),
+    path('live-monitor/monitors/<uuid:session_id>/stop/', douyin_views.stop_monitor, name='douyin-monitor-stop'),
+    path(
+        'live-monitor/monitors/<uuid:session_id>/refresh-stream/',
+        douyin_views.refresh_monitor_stream,
+        name='douyin-monitor-refresh-stream',
+    ),
+    path(
+        'live-monitor/monitors/<uuid:session_id>/config/',
+        douyin_views.save_monitor_config,
+        name='douyin-monitor-config',
+    ),
+    path(
+        'live-monitor/monitors/<uuid:session_id>/stream/',
+        douyin_views.monitor_stream,
+        name='douyin-monitor-stream',
+    ),
+    path(
+        'live-monitor/logs/<uuid:session_id>/export/',
+        douyin_views.export_monitor_log,
+        name='douyin-monitor-log-export',
+    ),
+    path(
+        'live-monitor/logs/<uuid:session_id>/',
+        douyin_views.delete_monitor_log,
+        name='douyin-monitor-log-delete',
+    ),
     path('tasks/<uuid:job_id>/', views.get_worker_task, name='worker-task-detail'),
     path('payroll/health/', views.payroll_health, name='payroll-health'),
     path('payroll/jobs/', views.create_payroll_job, name='payroll-job-create'),

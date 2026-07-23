@@ -3,6 +3,7 @@ import HomeView from '../views/HomeView.vue'
 import ProductsView from '../views/ProductsView.vue'
 import ProductDetailView from '../views/ProductDetailView.vue'
 import FeaturesView from '../views/FeaturesView.vue'
+import LiveMonitorView from '../views/LiveMonitorView.vue'
 import BrandView from '../views/BrandView.vue'
 import ContactView from '../views/ContactView.vue'
 
@@ -31,6 +32,7 @@ const routes = [
     meta: { title: '冰玛瑙眼膜' },
   },
   { path: '/features', name: 'features', component: FeaturesView, meta: { title: '功能' } },
+  { path: '/features/live-monitor', name: 'live-monitor', component: LiveMonitorView, meta: { title: '直播间监控' } },
   { path: '/brand', name: 'brand', component: BrandView, meta: { title: '品牌' } },
   { path: '/contact', name: 'contact', component: ContactView, meta: { title: '联系我们' } },
 ]

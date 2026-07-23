@@ -1,6 +1,13 @@
 from django.contrib import admin
 
-from .models import FormAutomationAsset, FormAutomationJob, PayrollJob, Profile
+from .models import (
+    DouyinMonitorConfig,
+    DouyinMonitorSession,
+    FormAutomationAsset,
+    FormAutomationJob,
+    PayrollJob,
+    Profile,
+)
 
 
 @admin.register(Profile)
@@ -30,3 +37,18 @@ class FormAutomationJobAdmin(admin.ModelAdmin):
     search_fields = ('id', 'error_message')
     readonly_fields = ('id', 'claim_token', 'created_at', 'updated_at')
     inlines = (FormAutomationAssetInline,)
+
+
+@admin.register(DouyinMonitorSession)
+class DouyinMonitorSessionAdmin(admin.ModelAdmin):
+    list_display = ('id', 'douyin_id', 'room_title', 'status', 'current_count', 'started_at', 'ended_at')
+    list_filter = ('status', 'started_at')
+    search_fields = ('id', 'douyin_id', 'room_title')
+    readonly_fields = ('id', 'started_at', 'updated_at')
+
+
+@admin.register(DouyinMonitorConfig)
+class DouyinMonitorConfigAdmin(admin.ModelAdmin):
+    list_display = ('douyin_id', 'enabled', 'mode', 'threshold', 'cooldown_enabled', 'updated_at')
+    list_filter = ('enabled', 'mode', 'cooldown_enabled')
+    search_fields = ('douyin_id',)
