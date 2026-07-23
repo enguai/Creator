@@ -31,8 +31,8 @@ const routes = [
     props: { productId: 'agate-eye' },
     meta: { title: '冰玛瑙眼膜' },
   },
-  { path: '/features', name: 'features', component: FeaturesView, meta: { title: '功能' } },
-  { path: '/features/live-monitor', name: 'live-monitor', component: LiveMonitorView, meta: { title: '直播间监控' } },
+  { path: '/features', name: 'features', component: FeaturesView, meta: { title: '工具库' } },
+  { path: '/features/live-monitor', name: 'live-monitor', component: LiveMonitorView, meta: { title: '直播监控' } },
   { path: '/brand', name: 'brand', component: BrandView, meta: { title: '品牌' } },
   { path: '/contact', name: 'contact', component: ContactView, meta: { title: '联系我们' } },
 ]

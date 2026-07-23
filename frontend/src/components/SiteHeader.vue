@@ -8,7 +8,7 @@ const menuOpen = ref(false)
 const navItems = [
   { label: '首页', to: '/' },
   { label: '产品', to: '/products' },
-  { label: '功能', to: '/features' },
+  { label: '工具库', to: '/features' },
   { label: '品牌', to: '/brand' },
   { label: '联系我们', to: '/contact' },
 ]

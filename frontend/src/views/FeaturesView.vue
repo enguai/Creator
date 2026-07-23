@@ -74,7 +74,7 @@ const automationErrorMessage = ref('')
 const isAutomationSubmitting = ref(false)
 const formApiHealth = ref({
   status: 'checking',
-  message: '正在连接报销表格自动化后端...',
+  message: '正在连接报销助手后端...',
   capabilities: null,
 })
 const automationFiles = reactive({
@@ -286,6 +286,27 @@ function formatTaskTime(value) {
   }).format(date)
 }
 
+function formatDurationSeconds(value) {
+  const seconds = Math.max(0, Math.floor(Number(value) || 0))
+  const hours = Math.floor(seconds / 3600)
+  const minutes = Math.floor((seconds % 3600) / 60)
+  const rest = seconds % 60
+  if (hours) return `${hours}小时 ${minutes}分 ${rest}秒`
+  if (minutes) return `${minutes}分 ${rest}秒`
+  return `${rest}秒`
+}
+
+function formatProcessingDuration(task) {
+  if (!task?.started_at) return '尚未开始'
+  if (Number.isFinite(Number(task.processing_duration_seconds))) {
+    return formatDurationSeconds(task.processing_duration_seconds)
+  }
+  const startedAt = new Date(task.started_at).getTime()
+  const finishedAt = task.finished_at ? new Date(task.finished_at).getTime() : Date.now()
+  if (!Number.isFinite(startedAt) || !Number.isFinite(finishedAt)) return '—'
+  return formatDurationSeconds((finishedAt - startedAt) / 1000)
+}
+
 async function loadWorkerTask(silent = false) {
   const jobId = taskQueryId.value.trim()
   const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
@@ -487,13 +508,13 @@ onMounted(async () => {
     const health = await checkFormAutomationHealth()
     formApiHealth.value = {
       status: 'ok',
-      message: health.message || '报销表格自动化后端已连接。',
+      message: health.message || '报销助手后端已连接。',
       capabilities: health.capabilities || null,
     }
   } catch (error) {
     formApiHealth.value = {
       status: 'error',
-      message: error.message || '无法连接到报销表格自动化后端。',
+      message: error.message || '无法连接到报销助手后端。',
       capabilities: null,
     }
   }
@@ -520,15 +541,15 @@ watch(automationType, () => {
 </script>
 
 <template>
-  <div>
+  <div class="tool-library-page">
     <section class="features-hero">
       <div class="container features-hero-grid">
         <div>
           <p class="eyebrow">CREATOR TOOLS</p>
-          <h1>功能中心</h1>
+          <h1>造物者直播间工具箱</h1>
           <p>
-            这里会逐步沉淀造物者直播部门的内部效率工具，覆盖直播监控、薪资计算、
-            表格自动化、测试记录和任务查询。
+            集中管理造物者直播部门的日常工具，覆盖任务查询、直播监控、薪资计算、
+            报销处理和测试记录。
           </p>
         </div>
 
@@ -536,24 +557,24 @@ watch(automationType, () => {
           <span>AVAILABLE NOW</span>
           <ul>
             <li>
-              <strong>直播间监控</strong>
+              <strong>任务查询</strong>
+              <small>通过任务 ID 查询处理进度、处理时长、结果和失败原因。</small>
+            </li>
+            <li>
+              <strong>直播监控</strong>
               <small>查看直播画面、在线人数曲线、飞书告警和监控日志。</small>
             </li>
             <li>
-              <strong>兼职薪资计算</strong>
+              <strong>薪资计算</strong>
               <small>上传排班和主播数据，生成薪资测试文档。</small>
             </li>
             <li>
-              <strong>报销表格自动化</strong>
+              <strong>报销助手</strong>
               <small>选择表格类型，下载模板并上传生成材料。</small>
             </li>
             <li>
-              <strong>自动化记录测试数据</strong>
+              <strong>测试助手</strong>
               <small>填写测试日期、直播间、测试人员和调整图示。</small>
-            </li>
-            <li>
-              <strong>Worker 任务查询</strong>
-              <small>通过任务 ID 查询处理进度、结果和失败原因。</small>
             </li>
           </ul>
         </div>
@@ -563,18 +584,18 @@ watch(automationType, () => {
     <section class="section container live-monitor-entry">
       <div>
         <p class="eyebrow">LIVE OPERATIONS</p>
-        <h2>直播间监控</h2>
+        <h2>直播监控</h2>
         <p>同时监控多个抖音直播间，实时查看画面、在线人数、告警状态与历史曲线。</p>
       </div>
-      <RouterLink class="primary-button" to="/features/live-monitor">进入监控工作台</RouterLink>
+      <RouterLink class="primary-button" to="/features/live-monitor">进入直播监控</RouterLink>
     </section>
 
     <section class="section container tool-module task-query-module">
       <div class="tool-module-heading">
         <div>
           <p class="eyebrow">WORKER TASKS</p>
-          <h2>任务进度查询</h2>
-          <p>输入报销表格或兼职薪资任务的完整 ID，系统会自动刷新正在处理的任务。</p>
+          <h2>任务查询</h2>
+          <p>输入报销助手或薪资计算任务的完整 ID，系统会自动刷新进度和处理时长。</p>
         </div>
       </div>
 
@@ -623,6 +644,10 @@ watch(automationType, () => {
               <dd>{{ queriedTask.attempt_count }} 次</dd>
             </div>
             <div>
+              <dt>处理时长</dt>
+              <dd>{{ formatProcessingDuration(queriedTask) }}</dd>
+            </div>
+            <div>
               <dt>提交时间</dt>
               <dd>{{ formatTaskTime(queriedTask.created_at) }}</dd>
             </div>
@@ -656,11 +681,11 @@ watch(automationType, () => {
       </div>
     </section>
 
-    <section class="section container tool-module">
+    <section class="section container tool-module test-assistant-module">
       <div class="tool-module-heading">
         <div>
           <p class="eyebrow">TEST DATA</p>
-          <h2>自动化记录测试数据</h2>
+          <h2>测试助手</h2>
           <p>
             先完成测试基础信息录入，包含测试日期、直播间、测试人员、调整类型和调整图示。
             后续记录保存、统计或自动化处理逻辑可以继续接在这个模块上。
@@ -724,6 +749,10 @@ watch(automationType, () => {
               <dt>调整类型</dt>
               <dd>{{ testDataForm.adjustmentType || '未填写' }}</dd>
             </div>
+            <div>
+              <dt>处理时长</dt>
+              <dd>尚未开始</dd>
+            </div>
           </dl>
 
           <div class="test-image-preview">
@@ -734,11 +763,11 @@ watch(automationType, () => {
       </div>
     </section>
 
-    <section class="section container tool-module">
+    <section class="section container tool-module payroll-tool-module">
       <div class="tool-module-heading">
         <div>
           <p class="eyebrow">PAYROLL WORKFLOW</p>
-          <h2>兼职薪资计算</h2>
+          <h2>薪资计算</h2>
           <p>
             上传主播排班、场控排班、试播间排班和主播数据后，任务会进入 Windows Codex Worker 队列，
             按 live-payroll 规则生成对应直播间的正式薪资表，并在完成后提供下载。
@@ -820,6 +849,7 @@ watch(automationType, () => {
           <div v-if="!job" class="result-empty">
             <span>尚未提交</span>
             <p>上传四个文件后点击提交，Windows Worker 会按规则生成可下载的薪资表。</p>
+            <p>处理时长：尚未开始</p>
           </div>
 
           <div v-else class="payroll-job">
@@ -831,6 +861,10 @@ watch(automationType, () => {
               <div>
                 <dt>状态</dt>
                 <dd>{{ statusLabel }}</dd>
+              </div>
+              <div>
+                <dt>处理时长</dt>
+                <dd>{{ formatProcessingDuration(job) }}</dd>
               </div>
               <div v-if="job.week_start || job.week_end">
                 <dt>薪资计算周期</dt>
@@ -858,10 +892,6 @@ watch(automationType, () => {
                 <dt>处理方式</dt>
                 <dd>{{ job.status === 'success' ? 'Codex Worker 已调用 live-payroll skill' : '等待 Codex Worker 调用 live-payroll skill' }}</dd>
               </div>
-              <div v-if="payrollSummary.duration_seconds">
-                <dt>处理耗时</dt>
-                <dd>{{ payrollSummary.duration_seconds }} 秒</dd>
-              </div>
             </dl>
 
             <button class="download-button" type="button" :disabled="job.status !== 'success'" @click="downloadResult">
@@ -872,11 +902,11 @@ watch(automationType, () => {
       </div>
     </section>
 
-    <section class="section container tool-module">
+    <section class="section container tool-module reimbursement-tool-module">
       <div class="tool-module-heading">
         <div>
           <p class="eyebrow">FORM AUTOMATION</p>
-          <h2>报销表格自动化</h2>
+          <h2>报销助手</h2>
           <p>
             先选择要生成的表格类型，下载对应模板，再上传本次生成所需的材料。当前已切换为 work05 兼容管线：
             有 AI Key 时自动识别物品信息并生成正式表格，未配置时也会生成带图片、发票附件和待复核提示的表格。
@@ -1012,6 +1042,10 @@ watch(automationType, () => {
             <div>
               <dt>状态</dt>
               <dd>{{ automationStatusLabel }}</dd>
+            </div>
+            <div>
+              <dt>处理时长</dt>
+              <dd>{{ formatProcessingDuration(automationJob) }}</dd>
             </div>
             <div v-if="automationJob?.summary?.mode">
               <dt>处理管线</dt>

@@ -5,11 +5,11 @@ async function requestJson(url, options) {
   try {
     response = await fetch(url, options)
   } catch {
-    throw new Error('无法连接直播间监控服务，请确认本地 Django 已启动。')
+    throw new Error('无法连接直播监控服务，请确认本地 Django 已启动。')
   }
   const payload = await response.json().catch(() => ({}))
   if (!response.ok) {
-    throw new Error(payload.message || `直播间监控服务返回 HTTP ${response.status}。`)
+    throw new Error(payload.message || `直播监控服务返回 HTTP ${response.status}。`)
   }
   return payload
 }

@@ -12,6 +12,7 @@ from django.utils import timezone
 
 from .douyin_monitor import matches_rule, parse_compact_number, validate_config
 from .models import DouyinMonitorSession, FormAutomationJob, PayrollJob
+from .views import serialize_form_automation_job
 
 
 class WorkerQueueTests(TestCase):
@@ -191,6 +192,22 @@ class WorkerQueueTests(TestCase):
         self.assertEqual(payload['progress'], 5)
         self.assertEqual(payload['attempt_count'], 1)
         self.assertEqual(len(payload['files']), 4)
+
+    def test_unified_task_query_uses_the_same_processing_duration_as_job_payload(self):
+        started_at = timezone.now() - timedelta(seconds=65)
+        job = self.create_form_job(
+            status=FormAutomationJob.Status.RUNNING,
+            started_at=started_at,
+            progress=35,
+        )
+
+        response = self.client.get(reverse('worker-task-detail', args=[job.id]))
+        payload = response.json()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(payload['processing_duration_seconds'], serialize_form_automation_job(job)['processing_duration_seconds'])
+        self.assertGreaterEqual(payload['processing_duration_seconds'], 65)
+        self.assertLess(payload['processing_duration_seconds'], 70)
 
     @override_settings(CREATOR_CLOUD_SERVER_URL='http://cloud.example')
     @patch('core.views.get_cloud_worker_task')

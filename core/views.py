@@ -241,6 +241,13 @@ def update_worker_heartbeat(request, model, serializer, job_id):
     return api_response(serializer(job))
 
 
+def worker_processing_duration_seconds(job):
+    if not job.started_at:
+        return 0
+    ended_at = job.finished_at or timezone.now()
+    return max(0, int((ended_at - job.started_at).total_seconds()))
+
+
 def worker_tracking_payload(job):
     return {
         'progress': job.progress,
@@ -249,6 +256,7 @@ def worker_tracking_payload(job):
         'attempt_count': job.attempt_count,
         'started_at': job.started_at.isoformat() if job.started_at else '',
         'finished_at': job.finished_at.isoformat() if job.finished_at else '',
+        'processing_duration_seconds': worker_processing_duration_seconds(job),
     }
 
 
@@ -421,7 +429,8 @@ def get_worker_task(request, job_id):
         job = FormAutomationJob.objects.prefetch_related('assets').get(id=job_id)
         serialized = serialize_form_automation_job(job)
         task_type = 'form_automation'
-        task_label = '费用报销表' if job.form_type == FormAutomationJob.FormType.EXPENSE else '采购申请表'
+        document_label = '费用报销表' if job.form_type == FormAutomationJob.FormType.EXPENSE else '采购申请表'
+        task_label = f'报销助手 · {document_label}'
     except FormAutomationJob.DoesNotExist:
         try:
             job = PayrollJob.objects.get(id=job_id)
@@ -446,7 +455,7 @@ def get_worker_task(request, job_id):
             'z2-eye': 'Z2 眼膜直播间',
             'z3-polish': 'Z3 抛光直播间',
         }
-        task_label = f"兼职薪资计算 · {room_labels.get(job.room_type, job.room_type)}"
+        task_label = f"薪资计算 · {room_labels.get(job.room_type, job.room_type)}"
 
     status_labels = {
         'pending': '等待处理',
@@ -471,6 +480,7 @@ def get_worker_task(request, job_id):
             'updated_at': job.updated_at.isoformat(),
             'started_at': job.started_at.isoformat() if job.started_at else '',
             'finished_at': job.finished_at.isoformat() if job.finished_at else '',
+            'processing_duration_seconds': serialized['processing_duration_seconds'],
             'error_message': job.error_message,
             'download_url': serialized['download_url'],
             'files': serialized['files'],
@@ -485,7 +495,7 @@ def payroll_health(_request):
         {
             'ok': True,
             'service': 'creator-payroll',
-            'message': '兼职薪资计算后端已连接。',
+            'message': '薪资计算后端已连接。',
             'capabilities': {
                 'backend': payroll_backend(),
                 'worker_token_configured': bool(worker_token()),
@@ -510,7 +520,7 @@ def form_automation_health(_request):
         {
             'ok': True,
             'service': 'creator-form-automation',
-            'message': '报销表格自动化后端已连接。',
+            'message': '报销助手后端已连接。',
             'capabilities': capabilities,
             'server_time': timezone.localtime(timezone.now()).isoformat(),
             'upload_limit_mb': settings.DATA_UPLOAD_MAX_MEMORY_SIZE // 1024 // 1024,
@@ -621,7 +631,7 @@ def create_payroll_job(request):
             {
                 'error': 'payroll_backend_not_ready',
                 'message': (
-                    '兼职薪资计算尚未启用 Codex Worker。为避免生成不可靠的测试文档，'
+                    '薪资计算尚未启用 Codex Worker。为避免生成不可靠的测试文档，'
                     '本次提交未执行。请先启动 Windows Worker 后重试。'
                 ),
                 'backend': backend,

@@ -21,13 +21,13 @@ function buildHttpError(response, payload) {
   if (response.status === 404 && payload.error === 'task_not_found') {
     message = payload.message || '没有找到这个任务，请检查任务 ID 是否完整。'
   } else if (response.status === 404) {
-    message = '没有连接到报销表格自动化后端 API。请确认 Django 后端已启动，并且 /api/ 已正确代理。'
+    message = '没有连接到报销助手后端 API。请确认 Django 后端已启动，并且 /api/ 已正确代理。'
   } else if (response.status === 413) {
     message = '上传材料超过服务器限制。请减少文件数量、压缩图片，或提高上传大小限制。'
   } else if (response.status >= 500 && !serverMessage) {
-    message = '报销表格自动化后端发生错误。请查看 Django 控制台日志。'
+    message = '报销助手后端发生错误。请查看 Django 控制台日志。'
   } else if (rawText.trim().startsWith('<!doctype') || rawText.trim().startsWith('<html')) {
-    message = `请求没有到达报销表格自动化 API，服务器返回了网页内容（HTTP ${response.status}）。请检查 /api/ 代理配置。`
+    message = `请求没有到达报销助手 API，服务器返回了网页内容（HTTP ${response.status}）。请检查 /api/ 代理配置。`
   }
 
   const error = new Error(message)
@@ -42,7 +42,7 @@ async function requestJson(url, options) {
   try {
     response = await fetch(url, options)
   } catch (error) {
-    throw new Error('无法连接到报销表格自动化后端。请确认 Django 服务已启动。')
+    throw new Error('无法连接到报销助手后端。请确认 Django 服务已启动。')
   }
 
   const payload = await readResponse(response)

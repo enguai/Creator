@@ -254,7 +254,7 @@ onBeforeUnmount(() => {
       <div class="container monitor-header-inner">
         <div>
           <p class="eyebrow">LIVE OPERATIONS</p>
-          <h1>直播间监控</h1>
+          <h1>直播监控</h1>
           <p>实时查看直播画面和在线人数，统一管理告警、曲线与监控记录。</p>
         </div>
         <div class="service-state" :class="{ offline: !serviceOnline }">
@@ -266,7 +266,7 @@ onBeforeUnmount(() => {
     </section>
 
     <section class="container monitor-workbench">
-      <nav class="monitor-tabs" aria-label="直播间监控功能">
+      <nav class="monitor-tabs" aria-label="直播监控功能">
         <button
           v-for="tab in tabs"
           :key="tab.id"
