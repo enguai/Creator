@@ -72,3 +72,7 @@ export async function getFormAutomationJob(jobId) {
 export async function getWorkerTask(jobId) {
   return requestJson(`/api/tasks/${encodeURIComponent(jobId)}/`)
 }
+
+export async function getRecentWorkerTasks() {
+  return requestJson('/api/tasks/recent/')
+}

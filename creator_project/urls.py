@@ -27,6 +27,7 @@ urlpatterns = [
 if settings.DEBUG:
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
 
-admin.site.site_header = 'Creator Administration'
-admin.site.site_title = 'Creator Admin'
-admin.site.index_title = 'Management Console'
+admin.site.site_header = '造物者管理'
+admin.site.site_title = '造物者管理后台'
+admin.site.index_title = '管理中心'
+admin.site.empty_value_display = '暂无'

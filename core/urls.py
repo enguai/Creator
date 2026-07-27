@@ -2,9 +2,21 @@ from django.urls import path
 
 from . import views
 from . import douyin_views
+from . import auth_views
 
 
 urlpatterns = [
+    path('auth/session/', auth_views.session_detail, name='auth-session'),
+    path('auth/login/', auth_views.login_user, name='auth-login'),
+    path('auth/logout/', auth_views.logout_user, name='auth-logout'),
+    path('auth/register/', auth_views.register_user, name='auth-register'),
+    path('auth/recover-account/', auth_views.recover_account, name='auth-recover-account'),
+    path('auth/password-reset/', auth_views.request_password_reset, name='auth-password-reset'),
+    path(
+        'auth/password-reset-confirm/',
+        auth_views.confirm_password_reset,
+        name='auth-password-reset-confirm',
+    ),
     path('live-monitor/health/', douyin_views.monitor_health, name='douyin-monitor-health'),
     path('live-monitor/state/', douyin_views.monitor_state, name='douyin-monitor-state'),
     path('live-monitor/monitors/', douyin_views.start_monitor, name='douyin-monitor-start'),
@@ -34,6 +46,7 @@ urlpatterns = [
         douyin_views.delete_monitor_log,
         name='douyin-monitor-log-delete',
     ),
+    path('tasks/recent/', views.get_recent_worker_tasks, name='worker-task-recent'),
     path('tasks/<uuid:job_id>/', views.get_worker_task, name='worker-task-detail'),
     path('payroll/health/', views.payroll_health, name='payroll-health'),
     path('payroll/jobs/', views.create_payroll_job, name='payroll-job-create'),

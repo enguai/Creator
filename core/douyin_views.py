@@ -33,14 +33,14 @@ def monitor_health(_request):
 
 
 @require_GET
-def monitor_state(_request):
-    return response_json(monitor_manager.state())
+def monitor_state(request):
+    return response_json(monitor_manager.state(request.user))
 
 
 @csrf_exempt
 @require_POST
 def start_monitor(request):
-    ok, message, session = monitor_manager.start(request_payload(request).get('douyinId'))
+    ok, message, session = monitor_manager.start(request_payload(request).get('douyinId'), request.user)
     if not ok:
         return response_json({'ok': False, 'message': message}, status=400)
     return response_json({'ok': True, 'monitor': serialize_monitor(session)}, status=201)
@@ -48,22 +48,22 @@ def start_monitor(request):
 
 @csrf_exempt
 @require_POST
-def stop_monitor(_request, session_id):
-    ok, message = monitor_manager.stop(session_id)
+def stop_monitor(request, session_id):
+    ok, message = monitor_manager.stop(session_id, request.user)
     return response_json({'ok': ok, 'message': message}, status=200 if ok else 409)
 
 
 @csrf_exempt
 @require_POST
-def refresh_monitor_stream(_request, session_id):
-    ok, message = monitor_manager.refresh_stream(session_id)
+def refresh_monitor_stream(request, session_id):
+    ok, message = monitor_manager.refresh_stream(session_id, request.user)
     return response_json({'ok': ok, 'message': message}, status=200 if ok else 409)
 
 
 @csrf_exempt
 @require_http_methods(['POST', 'PUT'])
 def save_monitor_config(request, session_id):
-    ok, message, session = monitor_manager.save_config(session_id, request_payload(request))
+    ok, message, session = monitor_manager.save_config(session_id, request_payload(request), request.user)
     if not ok:
         return response_json({'ok': False, 'message': message}, status=400)
     return response_json({'ok': True, 'monitor': serialize_monitor(session)})
@@ -71,14 +71,14 @@ def save_monitor_config(request, session_id):
 
 @csrf_exempt
 @require_http_methods(['DELETE'])
-def delete_monitor_log(_request, session_id):
-    ok, message = monitor_manager.delete_log(session_id)
+def delete_monitor_log(request, session_id):
+    ok, message = monitor_manager.delete_log(session_id, request.user)
     return response_json({'ok': ok, 'message': message}, status=200 if ok else 409)
 
 
 @require_GET
-def export_monitor_log(_request, session_id):
-    session = DouyinMonitorSession.objects.filter(id=session_id).first()
+def export_monitor_log(request, session_id):
+    session = DouyinMonitorSession.objects.filter(id=session_id, owner=request.user).first()
     if not session:
         raise Http404('Monitor log not found.')
     if not session.points:
@@ -93,7 +93,7 @@ def export_monitor_log(_request, session_id):
 
 @require_GET
 def monitor_stream(request, session_id):
-    session = DouyinMonitorSession.objects.filter(id=session_id, ended_at__isnull=True).first()
+    session = DouyinMonitorSession.objects.filter(id=session_id, owner=request.user, ended_at__isnull=True).first()
     if not session or not session.stream_url:
         raise Http404('Monitor stream is not ready.')
     headers = {

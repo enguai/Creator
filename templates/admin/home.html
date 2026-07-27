@@ -1,0 +1,41 @@
+{% load static %}
+
+<div id="home" class="creator-admin-home">
+    <main class="creator-admin-home__inner">
+        <header class="creator-admin-welcome">
+            <div>
+                <p class="creator-admin-eyebrow">造物者后台</p>
+                <h1>管理中心</h1>
+                <p class="creator-admin-subtitle">集中管理用户、自动化任务、直播监控与安全记录。</p>
+            </div>
+            <div class="creator-admin-user">
+                <span>当前管理员</span>
+                <strong>{{ user.get_username }}</strong>
+            </div>
+        </header>
+
+        <section class="creator-admin-tools" aria-labelledby="creator-admin-tools-title">
+            <div class="creator-admin-section-heading">
+                <div>
+                    <p class="creator-admin-section-kicker">快捷入口</p>
+                    <h2 id="creator-admin-tools-title">常用管理</h2>
+                </div>
+                <span>选择模块开始管理</span>
+            </div>
+
+            <div class="creator-admin-tool-grid">
+                <button
+                    v-for="(item, index) in models"
+                    :key="item.name"
+                    type="button"
+                    class="creator-admin-tool"
+                    @click="openTab(item, (index + 1) + '')"
+                >
+                    <span class="creator-admin-tool__icon" :class="item.icon"></span>
+                    <span class="creator-admin-tool__name" v-text="item.name"></span>
+                    <span class="fas fa-arrow-right creator-admin-tool__arrow" aria-hidden="true"></span>
+                </button>
+            </div>
+        </section>
+    </main>
+</div>

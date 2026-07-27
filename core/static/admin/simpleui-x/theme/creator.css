@@ -1,0 +1,99 @@
+.el-tabs--border-card > .el-tabs__header .el-tabs__item.is-active,
+.el-tabs--border-card > .el-tabs__header .el-tabs__item:not(.is-disabled):hover,
+.el-button--text,
+.el-select-dropdown__item.selected,
+a:link,
+a:visited,
+tbody a:link,
+tbody a:visited {
+    color: #6b292e !important;
+}
+
+.el-tabs--border-card > .el-tabs__header .el-tabs__item.is-active {
+    border-bottom-color: #6b292e !important;
+}
+
+.el-button--primary,
+.el-date-table td.end-date span,
+.el-date-table td.start-date span,
+.el-pagination.is-background .el-pager li:not(.disabled).active {
+    color: #ffffff !important;
+    background-color: #6b292e !important;
+    border-color: #6b292e !important;
+}
+
+.el-button--primary:hover,
+.el-button--primary:focus {
+    color: #ffffff !important;
+    background-color: #552024 !important;
+    border-color: #552024 !important;
+}
+
+.el-dropdown-menu__item:focus,
+.el-dropdown-menu__item:not(.is-disabled):hover,
+.el-select-dropdown__item.hover,
+.el-select-dropdown__item:hover,
+tbody tr:hover td,
+tbody tr:hover th {
+    color: #6b292e !important;
+    background-color: #f2e5e7 !important;
+}
+
+input[type="text"]:focus,
+input[type="password"]:focus,
+input[type="email"]:focus,
+input[type="url"]:focus,
+input[type="number"]:focus,
+input[type="tel"]:focus,
+textarea:focus,
+select:focus,
+.vTextField:focus,
+.el-range-editor.is-active,
+.el-range-editor.is-active:hover {
+    border-color: #6b292e !important;
+}
+
+.navbar {
+    color: #302627 !important;
+    background: #ffffff !important;
+}
+
+.navbar .el-button,
+.navbar .el-breadcrumb__inner,
+.navbar .el-breadcrumb__separator,
+.navbar .el-breadcrumb__item:last-child .el-breadcrumb__inner {
+    color: #514849 !important;
+}
+
+.navbar .el-button:hover,
+.navbar .el-button:focus {
+    color: #6b292e !important;
+}
+
+.menu,
+.menu .el-menu,
+.menu .el-menu-item-group,
+.menu .el-menu-item,
+.menu .el-submenu__title,
+.logo-wrap {
+    background: #332d2e !important;
+}
+
+.menu .el-menu-item,
+.menu .el-submenu__title,
+.menu .el-submenu__title i,
+.logo-wrap {
+    color: #e8e1e1 !important;
+}
+
+.menu .el-menu-item:hover,
+.menu .el-submenu__title:hover,
+.menu .is-opened > .el-submenu__title {
+    color: #ffffff !important;
+    background: #463b3c !important;
+}
+
+.menu .el-menu .is-active {
+    color: #ffffff !important;
+    background: #6b292e !important;
+}

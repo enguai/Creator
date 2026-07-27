@@ -5,13 +5,18 @@ from datetime import timedelta
 from unittest.mock import patch
 from urllib.parse import unquote
 
+from django.contrib.auth.models import User
+from django.contrib.auth.tokens import default_token_generator
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.core import mail
 from django.test import TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
+from django.utils.encoding import force_bytes
+from django.utils.http import urlsafe_base64_encode
 
 from .douyin_monitor import matches_rule, parse_compact_number, validate_config
-from .models import DouyinMonitorSession, FormAutomationJob, PayrollJob
+from .models import DouyinMonitorSession, FormAutomationJob, PayrollJob, UserSecurityEvent
 from .views import serialize_form_automation_job
 
 
@@ -26,6 +31,8 @@ class WorkerQueueTests(TestCase):
             AUTOMATION_WORKER_MAX_ATTEMPTS=2,
         )
         self.settings_override.enable()
+        self.user = User.objects.create_user('worker-test-user', 'worker@example.com', 'StrongPass123!')
+        self.client.force_login(self.user)
         self.worker_headers = {'HTTP_X_CREATOR_WORKER_TOKEN': 'test-worker-token'}
 
     def tearDown(self):
@@ -46,10 +53,11 @@ class WorkerQueueTests(TestCase):
             'status': FormAutomationJob.Status.PENDING,
         }
         values.update(overrides)
-        return FormAutomationJob.objects.create(**values)
+        return FormAutomationJob.objects.create(owner=self.user, **values)
 
     def create_payroll_job(self):
         return PayrollJob.objects.create(
+            owner=self.user,
             room_type='z3-polish',
             status=PayrollJob.Status.PENDING,
             host_schedule=SimpleUploadedFile('host.xlsx', b'host'),
@@ -230,6 +238,10 @@ class WorkerQueueTests(TestCase):
 
 
 class DouyinMonitorTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user('monitor-test-user', 'monitor@example.com', 'StrongPass123!')
+        self.client.force_login(self.user)
+
     def test_rule_validation_and_compact_counts_match_desktop_app(self):
         self.assertTrue(matches_rule(101, {'mode': 'greater', 'threshold': 100}))
         self.assertFalse(matches_rule(100, {'mode': 'greater', 'threshold': 100}))
@@ -252,6 +264,7 @@ class DouyinMonitorTests(TestCase):
     def test_config_export_and_log_deletion(self):
         self.client.get(reverse('douyin-monitor-state'))
         session = DouyinMonitorSession.objects.create(
+            owner=self.user,
             douyin_id='creator-test',
             room_title='测试直播间',
             status=DouyinMonitorSession.Status.MONITORING,
@@ -288,3 +301,105 @@ class DouyinMonitorTests(TestCase):
         delete_response = self.client.delete(reverse('douyin-monitor-log-delete', args=[session.id]))
         self.assertEqual(delete_response.status_code, 200)
         self.assertFalse(DouyinMonitorSession.objects.filter(id=session.id).exists())
+
+
+@override_settings(EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend')
+class AuthenticationTests(TestCase):
+    def test_anonymous_user_cannot_access_tools_api(self):
+        response = self.client.get(reverse('payroll-health'))
+
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.json()['error'], 'authentication_required')
+
+    def test_registration_creates_session_and_security_events(self):
+        response = self.client.post(
+            reverse('auth-register'),
+            data=json.dumps({
+                'username': 'creator-user',
+                'email': 'creator@example.com',
+                'password1': 'StrongPass123!',
+                'password2': 'StrongPass123!',
+            }),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 201)
+        self.assertTrue(response.json()['authenticated'])
+        self.assertEqual(response.json()['user']['username'], 'creator-user')
+        self.assertTrue(User.objects.get(username='creator-user').profile)
+        self.assertTrue(UserSecurityEvent.objects.filter(event=UserSecurityEvent.Event.REGISTERED).exists())
+
+    def test_password_reset_changes_password(self):
+        user = User.objects.create_user('reset-user', 'reset@example.com', 'OldStrongPass123!')
+        request_response = self.client.post(
+            reverse('auth-password-reset'),
+            data=json.dumps({'email': user.email}),
+            content_type='application/json',
+        )
+
+        self.assertEqual(request_response.status_code, 200)
+        self.assertEqual(len(mail.outbox), 1)
+        uid = urlsafe_base64_encode(force_bytes(user.pk))
+        token = default_token_generator.make_token(user)
+        confirm_response = self.client.post(
+            reverse('auth-password-reset-confirm'),
+            data=json.dumps({
+                'uid': uid,
+                'token': token,
+                'password1': 'NewStrongPass123!',
+                'password2': 'NewStrongPass123!',
+            }),
+            content_type='application/json',
+        )
+
+        self.assertEqual(confirm_response.status_code, 200)
+        user.refresh_from_db()
+        self.assertTrue(user.check_password('NewStrongPass123!'))
+
+    def test_user_cannot_read_another_users_task(self):
+        owner = User.objects.create_user('task-owner', 'owner@example.com', 'StrongPass123!')
+        stranger = User.objects.create_user('task-stranger', 'stranger@example.com', 'StrongPass123!')
+        job = FormAutomationJob.objects.create(owner=owner, form_type=FormAutomationJob.FormType.EXPENSE)
+        self.client.force_login(stranger)
+
+        response = self.client.get(reverse('form-automation-job-detail', args=[job.id]))
+
+        self.assertEqual(response.status_code, 404)
+
+    def test_recent_tasks_prefers_active_task_for_each_user(self):
+        user = User.objects.create_user('recent-owner', 'recent@example.com', 'StrongPass123!')
+        FormAutomationJob.objects.create(
+            owner=user,
+            form_type=FormAutomationJob.FormType.EXPENSE,
+            status=FormAutomationJob.Status.SUCCESS,
+        )
+        active_job = FormAutomationJob.objects.create(
+            owner=user,
+            form_type=FormAutomationJob.FormType.PROCUREMENT,
+            status=FormAutomationJob.Status.RUNNING,
+        )
+        self.client.force_login(user)
+
+        response = self.client.get(reverse('worker-task-recent'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['tasks'][0]['id'], str(active_job.id))
+
+    def test_login_is_temporarily_blocked_after_repeated_failures(self):
+        User.objects.create_user('limited-user', 'limited@example.com', 'StrongPass123!')
+        url = reverse('auth-login')
+        for _index in range(5):
+            response = self.client.post(
+                url,
+                data=json.dumps({'username': 'limited-user', 'password': 'wrong'}),
+                content_type='application/json',
+            )
+            self.assertEqual(response.status_code, 401)
+
+        blocked = self.client.post(
+            url,
+            data=json.dumps({'username': 'limited-user', 'password': 'StrongPass123!'}),
+            content_type='application/json',
+        )
+
+        self.assertEqual(blocked.status_code, 429)

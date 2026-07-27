@@ -4,7 +4,7 @@ import os
 import uuid
 from datetime import timedelta
 from urllib.error import HTTPError, URLError
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urlencode, urljoin, urlparse
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
@@ -70,6 +70,16 @@ def require_worker_token(request):
     if not configured_token:
         return False
     return hmac.compare_digest(str(configured_token), str(provided_token or ''))
+
+
+def owned_queryset(model, request):
+    queryset = model.objects.all()
+    if require_worker_token(request):
+        owner_username = request.GET.get('owner', '').strip()
+        return queryset.filter(owner__username=owner_username) if owner_username else queryset
+    if request.user.is_staff:
+        return queryset
+    return queryset.filter(owner=request.user)
 
 
 def parse_json_body(request):
@@ -405,9 +415,13 @@ def get_cloud_worker_task(request, job_id):
     if not base_url or urlparse(base_url).netloc.lower() == request.get_host().lower():
         return None
 
-    task_url = f'{base_url}/api/tasks/{job_id}/'
+    query = urlencode({'owner': request.user.username}) if request.user.is_authenticated else ''
+    task_url = f'{base_url}/api/tasks/{job_id}/' + (f'?{query}' if query else '')
+    headers = {'Accept': 'application/json'}
+    if worker_token():
+        headers['X-Creator-Worker-Token'] = worker_token()
     try:
-        with urlopen(Request(task_url, headers={'Accept': 'application/json'}), timeout=8) as response:
+        with urlopen(Request(task_url, headers=headers), timeout=8) as response:
             payload = json.loads(response.read().decode('utf-8'))
     except HTTPError as exc:
         if exc.code == 404:
@@ -426,14 +440,14 @@ def get_cloud_worker_task(request, job_id):
 @require_GET
 def get_worker_task(request, job_id):
     try:
-        job = FormAutomationJob.objects.prefetch_related('assets').get(id=job_id)
+        job = owned_queryset(FormAutomationJob, request).prefetch_related('assets').get(id=job_id)
         serialized = serialize_form_automation_job(job)
         task_type = 'form_automation'
         document_label = '费用报销表' if job.form_type == FormAutomationJob.FormType.EXPENSE else '采购申请表'
         task_label = f'报销助手 · {document_label}'
     except FormAutomationJob.DoesNotExist:
         try:
-            job = PayrollJob.objects.get(id=job_id)
+            job = owned_queryset(PayrollJob, request).get(id=job_id)
         except PayrollJob.DoesNotExist:
             try:
                 cloud_task = get_cloud_worker_task(request, job_id)
@@ -487,6 +501,29 @@ def get_worker_task(request, job_id):
             'task_source': 'local',
         }
     )
+
+
+@require_GET
+def get_recent_worker_tasks(request):
+    tasks = []
+    definitions = (
+        (FormAutomationJob, 'form_automation'),
+        (PayrollJob, 'payroll'),
+    )
+    for model, task_type in definitions:
+        queryset = owned_queryset(model, request)
+        job = queryset.filter(status__in=[model.Status.PENDING, model.Status.RUNNING]).order_by('-updated_at').first()
+        if job is None:
+            job = queryset.filter(status__in=[model.Status.SUCCESS, model.Status.FAILED]).order_by('-updated_at').first()
+        if job is not None:
+            tasks.append({
+                'id': str(job.id),
+                'task_type': task_type,
+                'status': job.status,
+                'updated_at': job.updated_at.isoformat(),
+            })
+    tasks.sort(key=lambda task: task['updated_at'], reverse=True)
+    return api_response({'tasks': tasks})
 
 
 @require_GET
@@ -641,6 +678,7 @@ def create_payroll_job(request):
 
     try:
         job = PayrollJob.objects.create(
+            owner=request.user,
             room_type=room_type,
             week_start=week_start,
             week_end=week_end,
@@ -671,13 +709,13 @@ def create_payroll_job(request):
 
 @require_GET
 def get_payroll_job(_request, job_id):
-    job = get_object_or_404(PayrollJob, id=job_id)
+    job = get_object_or_404(owned_queryset(PayrollJob, _request), id=job_id)
     return api_response(serialize_payroll_job(job))
 
 
 @require_GET
 def download_payroll_result(_request, job_id):
-    job = get_object_or_404(PayrollJob, id=job_id)
+    job = get_object_or_404(owned_queryset(PayrollJob, _request), id=job_id)
 
     if job.status != PayrollJob.Status.SUCCESS or not job.result_file:
         raise Http404('Payroll result is not ready.')
@@ -953,6 +991,7 @@ def create_form_automation_job(request):
         )
 
     job = FormAutomationJob.objects.create(
+        owner=request.user,
         form_type=form_type,
         status=FormAutomationJob.Status.PENDING,
     )
@@ -1027,13 +1066,13 @@ def create_form_automation_job(request):
 
 @require_GET
 def get_form_automation_job(_request, job_id):
-    job = get_object_or_404(FormAutomationJob, id=job_id)
+    job = get_object_or_404(owned_queryset(FormAutomationJob, _request), id=job_id)
     return api_response(serialize_form_automation_job(job))
 
 
 @require_GET
 def download_form_automation_result(_request, job_id):
-    job = get_object_or_404(FormAutomationJob, id=job_id)
+    job = get_object_or_404(owned_queryset(FormAutomationJob, _request), id=job_id)
 
     if job.status != FormAutomationJob.Status.SUCCESS or not job.result_file:
         raise Http404('Form automation result is not ready.')

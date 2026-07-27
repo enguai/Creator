@@ -1,9 +1,13 @@
 <script setup>
+import { LogOut } from '@lucide/vue'
 import { ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import logo from '../assets/images/creator-logo.jpg'
+import { signOut, useAuth } from '../auth'
 
 const route = useRoute()
+const router = useRouter()
+const { currentUser } = useAuth()
 const menuOpen = ref(false)
 const navItems = [
   { label: '首页', to: '/' },
@@ -14,6 +18,11 @@ const navItems = [
 ]
 
 watch(() => route.path, () => { menuOpen.value = false })
+
+async function logout() {
+  await signOut()
+  await router.replace('/login')
+}
 </script>
 
 <template>
@@ -30,6 +39,13 @@ watch(() => route.path, () => { menuOpen.value = false })
         <RouterLink v-for="item in navItems" :key="item.to" :to="item.to" class="nav-link" exact-active-class="active">
           {{ item.label }}
         </RouterLink>
+        <div v-if="currentUser" class="header-account">
+          <span>{{ currentUser.username }}</span>
+          <button type="button" title="退出登录" @click="logout">
+            <LogOut :size="17" aria-hidden="true" />
+            退出
+          </button>
+        </div>
       </nav>
     </div>
   </header>

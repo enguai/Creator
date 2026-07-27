@@ -187,16 +187,16 @@ class DouyinMonitorManager:
             )
             self._initialized = True
 
-    def state(self):
+    def state(self, owner):
         self.ensure_initialized()
-        monitors = DouyinMonitorSession.objects.filter(ended_at__isnull=True).order_by('started_at')
-        logs = DouyinMonitorSession.objects.all().order_by('-started_at')[:300]
+        monitors = DouyinMonitorSession.objects.filter(owner=owner, ended_at__isnull=True).order_by('started_at')
+        logs = DouyinMonitorSession.objects.filter(owner=owner).order_by('-started_at')[:300]
         return {
             'monitors': [serialize_monitor(item) for item in monitors],
             'logs': [serialize_log(item) for item in logs],
         }
 
-    def start(self, value):
+    def start(self, value, owner):
         self.ensure_initialized()
         douyin_id = normalize_douyin_input(value)
         if not douyin_id:
@@ -206,8 +206,9 @@ class DouyinMonitorManager:
         if douyin_id.lower().startswith('javascript:'):
             return False, '请输入有效的抖音号', None
 
-        saved_config = DouyinMonitorConfig.objects.filter(douyin_id=douyin_id).first()
+        saved_config = DouyinMonitorConfig.objects.filter(owner=owner, douyin_id=douyin_id).first()
         session = DouyinMonitorSession.objects.create(
+            owner=owner,
             douyin_id=douyin_id,
             config=config_payload(saved_config),
         )
@@ -226,10 +227,10 @@ class DouyinMonitorManager:
         thread.start()
         return True, '', session
 
-    def stop(self, session_id, reason='用户停止监控'):
+    def stop(self, session_id, owner, reason='用户停止监控'):
         self.ensure_initialized()
         try:
-            session = DouyinMonitorSession.objects.get(id=session_id)
+            session = DouyinMonitorSession.objects.get(id=session_id, owner=owner)
         except DouyinMonitorSession.DoesNotExist:
             return False, '监控任务不存在或已删除'
         if session.ended_at:
@@ -241,16 +242,17 @@ class DouyinMonitorManager:
         self._finish_session(session.id, reason)
         return True, ''
 
-    def save_config(self, session_id, value):
+    def save_config(self, session_id, value, owner):
         self.ensure_initialized()
         ok, message, config = validate_config(value)
         if not ok:
             return False, message, None
         try:
-            session = DouyinMonitorSession.objects.get(id=session_id, ended_at__isnull=True)
+            session = DouyinMonitorSession.objects.get(id=session_id, owner=owner, ended_at__isnull=True)
         except DouyinMonitorSession.DoesNotExist:
             return False, '监控任务不存在或已经停止', None
         DouyinMonitorConfig.objects.update_or_create(
+            owner=owner,
             douyin_id=session.douyin_id,
             defaults={
                 'enabled': config['enabled'],
@@ -268,10 +270,10 @@ class DouyinMonitorManager:
         session.save(update_fields=['config', 'updated_at'])
         return True, '', session
 
-    def refresh_stream(self, session_id):
+    def refresh_stream(self, session_id, owner):
         self.ensure_initialized()
         try:
-            session = DouyinMonitorSession.objects.get(id=session_id, ended_at__isnull=True)
+            session = DouyinMonitorSession.objects.get(id=session_id, owner=owner, ended_at__isnull=True)
         except DouyinMonitorSession.DoesNotExist:
             return False, '监控任务不存在或已经停止'
         with self._lock:
@@ -291,10 +293,10 @@ class DouyinMonitorManager:
         except Exception as exc:
             return False, str(exc) or '刷新直播画面失败'
 
-    def delete_log(self, session_id):
+    def delete_log(self, session_id, owner):
         self.ensure_initialized()
         try:
-            session = DouyinMonitorSession.objects.get(id=session_id)
+            session = DouyinMonitorSession.objects.get(id=session_id, owner=owner)
         except DouyinMonitorSession.DoesNotExist:
             return False, '日志不存在或已删除'
         if not session.ended_at:

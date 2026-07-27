@@ -17,6 +17,10 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
+def env_bool(name, default=False):
+    return os.environ.get(name, str(default)).lower() in {'1', 'true', 'yes', 'on'}
+
+
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
 
@@ -27,7 +31,7 @@ SECRET_KEY = os.environ.get(
 )
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = os.environ.get('DJANGO_DEBUG', 'True').lower() == 'true'
+DEBUG = env_bool('DJANGO_DEBUG', True)
 
 CONFIGURED_ALLOWED_HOSTS = [
     host.strip()
@@ -58,6 +62,8 @@ MIDDLEWARE = [
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
+    'core.middleware.ApiLoginRequiredMiddleware',
+    'core.middleware.SecurityHeadersMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
@@ -67,7 +73,7 @@ ROOT_URLCONF = 'creator_project.urls'
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [],
+        'DIRS': [BASE_DIR / 'templates'],
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
@@ -85,12 +91,25 @@ WSGI_APPLICATION = 'creator_project.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/6.0/ref/settings/#databases
 
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+if os.environ.get('DB_ENGINE', '').lower() in {'postgres', 'postgresql'}:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.postgresql',
+            'NAME': os.environ.get('DB_NAME', 'creator'),
+            'USER': os.environ.get('DB_USER', 'creator'),
+            'PASSWORD': os.environ.get('DB_PASSWORD', ''),
+            'HOST': os.environ.get('DB_HOST', '127.0.0.1'),
+            'PORT': os.environ.get('DB_PORT', '5432'),
+            'CONN_MAX_AGE': int(os.environ.get('DB_CONN_MAX_AGE', '60')),
+        }
     }
-}
+else:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': BASE_DIR / 'db.sqlite3',
+        }
+    }
 
 
 # Password validation
@@ -115,9 +134,9 @@ AUTH_PASSWORD_VALIDATORS = [
 # Internationalization
 # https://docs.djangoproject.com/en/6.0/topics/i18n/
 
-LANGUAGE_CODE = 'en-us'
+LANGUAGE_CODE = 'zh-hans'
 
-TIME_ZONE = 'UTC'
+TIME_ZONE = 'Asia/Shanghai'
 
 USE_I18N = True
 
@@ -141,3 +160,89 @@ FILE_UPLOAD_MAX_MEMORY_SIZE = 200 * 1024 * 1024
 # SimpleUI admin branding (admin language follows LANGUAGE_CODE above).
 SIMPLEUI_HOME_INFO = False
 SIMPLEUI_ANALYSIS = False
+SIMPLEUI_HOME_ACTION = False
+SIMPLEUI_LOGO = '/static/core/admin/creator-logo.jpg'
+SIMPLEUI_DEFAULT_THEME = 'creator.css'
+SIMPLEUI_CONFIG = {
+    'system_keep': False,
+    'menu_display': ['用户管理', '任务管理', '直播监控', '安全审计'],
+    'menus': [
+        {
+            'name': '用户管理',
+            'icon': 'fas fa-users',
+            'models': [
+                {'name': '用户账号', 'icon': 'far fa-user', 'url': '/admin/auth/user/'},
+                {'name': '用户资料', 'icon': 'far fa-id-card', 'url': '/admin/core/profile/'},
+                {'name': '权限组', 'icon': 'fas fa-user-shield', 'url': '/admin/auth/group/'},
+            ],
+        },
+        {
+            'name': '任务管理',
+            'icon': 'fas fa-list-check',
+            'models': [
+                {'name': '薪资计算任务', 'icon': 'fas fa-wallet', 'url': '/admin/core/payrolljob/'},
+                {'name': '报销与采购任务', 'icon': 'far fa-file-lines', 'url': '/admin/core/formautomationjob/'},
+            ],
+        },
+        {
+            'name': '直播监控',
+            'icon': 'fas fa-video',
+            'models': [
+                {'name': '监控记录', 'icon': 'fas fa-chart-line', 'url': '/admin/core/douyinmonitorsession/'},
+                {'name': '告警配置', 'icon': 'far fa-bell', 'url': '/admin/core/douyinmonitorconfig/'},
+            ],
+        },
+        {
+            'name': '安全审计',
+            'icon': 'fas fa-shield-halved',
+            'models': [
+                {'name': '用户安全日志', 'icon': 'fas fa-clock-rotate-left', 'url': '/admin/core/usersecurityevent/'},
+            ],
+        },
+    ],
+}
+
+# Authentication and account recovery
+AUTH_REQUIRE_LOGIN = env_bool('AUTH_REQUIRE_LOGIN', True)
+LOGIN_URL = '/login'
+SESSION_COOKIE_AGE = 30 * 24 * 60 * 60
+SESSION_COOKIE_HTTPONLY = True
+SESSION_COOKIE_SAMESITE = 'Lax'
+CSRF_COOKIE_SAMESITE = 'Lax'
+CSRF_FAILURE_VIEW = 'core.auth_views.csrf_failure'
+PASSWORD_RESET_TIMEOUT = int(os.environ.get('PASSWORD_RESET_TIMEOUT', '3600'))
+FRONTEND_BASE_URL = os.environ.get('FRONTEND_BASE_URL', '').strip()
+
+EMAIL_BACKEND = os.environ.get(
+    'EMAIL_BACKEND',
+    'django.core.mail.backends.console.EmailBackend',
+)
+EMAIL_HOST = os.environ.get('EMAIL_HOST', '')
+EMAIL_PORT = int(os.environ.get('EMAIL_PORT', '587'))
+EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER', '')
+EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD', '')
+EMAIL_USE_TLS = env_bool('EMAIL_USE_TLS', True)
+DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', '造物者 <no-reply@creatorlive.online>')
+
+# Enable these only after the production HTTPS certificate is active.
+SECURE_SSL_REDIRECT = env_bool('DJANGO_SECURE_SSL_REDIRECT', False)
+SESSION_COOKIE_SECURE = env_bool('DJANGO_SECURE_COOKIES', False)
+CSRF_COOKIE_SECURE = env_bool('DJANGO_SECURE_COOKIES', False)
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+SECURE_HSTS_SECONDS = int(os.environ.get('DJANGO_SECURE_HSTS_SECONDS', '0'))
+SECURE_HSTS_INCLUDE_SUBDOMAINS = env_bool('DJANGO_SECURE_HSTS_INCLUDE_SUBDOMAINS', False)
+SECURE_HSTS_PRELOAD = env_bool('DJANGO_SECURE_HSTS_PRELOAD', False)
+CSRF_TRUSTED_ORIGINS = [
+    origin.strip()
+    for origin in os.environ.get('DJANGO_CSRF_TRUSTED_ORIGINS', '').split(',')
+    if origin.strip()
+]
+if DEBUG:
+    CSRF_TRUSTED_ORIGINS.extend([
+        'http://127.0.0.1:5173',
+        'http://localhost:5173',
+    ])
+
+# django-simpleui removes Django's built-in frame middleware; the custom
+# SecurityHeadersMiddleware above applies the same protection.
+SILENCED_SYSTEM_CHECKS = ['security.W002']

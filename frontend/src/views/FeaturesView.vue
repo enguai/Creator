@@ -1,8 +1,27 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { ArrowDown, ArrowRight, ArrowUp, History } from '@lucide/vue'
 
-import { checkFormAutomationHealth, createFormAutomationJob, getFormAutomationJob, getWorkerTask } from '../api/forms'
+import { checkFormAutomationHealth, createFormAutomationJob, getFormAutomationJob, getRecentWorkerTasks, getWorkerTask } from '../api/forms'
 import { checkPayrollHealth, createPayrollJob, getPayrollJob } from '../api/payroll'
+
+const retainedTaskTypes = ['payroll', 'form_automation']
+
+function taskTimestamp(task) {
+  return new Date(task.updated_at || task.created_at || 0).getTime() || 0
+}
+
+function retainRelevantTasks(tasks) {
+  return retainedTaskTypes
+    .map((taskType) => {
+      const matchingTasks = tasks
+        .filter((task) => task?.id && task.task_type === taskType)
+        .sort((left, right) => taskTimestamp(right) - taskTimestamp(left))
+      return matchingTasks.find((task) => task.outcome === 'processing') || matchingTasks[0]
+    })
+    .filter(Boolean)
+    .sort((left, right) => taskTimestamp(right) - taskTimestamp(left))
+}
 
 const payrollFiles = [
   {
@@ -95,6 +114,8 @@ const taskQueryId = ref('')
 const queriedTask = ref(null)
 const taskQueryError = ref('')
 const isTaskQuerying = ref(false)
+const recentTasks = ref([])
+const showBackToTop = ref(false)
 let taskQueryTimer = null
 let componentUnmounted = false
 
@@ -307,6 +328,57 @@ function formatProcessingDuration(task) {
   return formatDurationSeconds((finishedAt - startedAt) / 1000)
 }
 
+function taskOutcomeFromStatus(status) {
+  if (status === 'success') return 'succeed'
+  if (status === 'failed') return 'failed'
+  return 'processing'
+}
+
+function taskLabel(task, taskType) {
+  if (task.task_label) return task.task_label
+  if (taskType === 'payroll') {
+    const room = roomTypes.find((item) => item.value === task.room_type)?.label || '薪资任务'
+    return `薪资计算 · ${room}`
+  }
+  const formType = formAutomationTypes[task.form_type]?.label || '表格任务'
+  return `报销助手 · ${formType}`
+}
+
+function rememberTask(task, taskType) {
+  if (!task?.id) return
+
+  const normalizedTask = {
+    id: task.id,
+    task_type: task.task_type || taskType,
+    task_label: taskLabel(task, task.task_type || taskType),
+    outcome: task.outcome || taskOutcomeFromStatus(task.status),
+    status_label: task.status_label || (task.status === 'success' ? '处理成功' : task.status === 'failed' ? '处理失败' : '正在处理'),
+    created_at: task.created_at || '',
+    updated_at: task.updated_at || '',
+  }
+  recentTasks.value = retainRelevantTasks([
+    normalizedTask,
+    ...recentTasks.value.filter((item) => item.id !== task.id),
+  ])
+}
+
+function scrollToTool(sectionId) {
+  document.getElementById(sectionId)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+
+function updateBackToTopVisibility() {
+  showBackToTop.value = window.scrollY > 480
+}
+
+function scrollToTop() {
+  window.scrollTo({ top: 0, behavior: 'smooth' })
+}
+
+function selectRecentTask(taskId) {
+  taskQueryId.value = taskId
+  loadWorkerTask(false)
+}
+
 async function loadWorkerTask(silent = false) {
   const jobId = taskQueryId.value.trim()
   const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
@@ -326,6 +398,7 @@ async function loadWorkerTask(silent = false) {
   try {
     const latestTask = await getWorkerTask(jobId)
     queriedTask.value = latestTask
+    rememberTask(latestTask, latestTask.task_type)
     if (automationJob.value?.id === latestTask.id) {
       automationJob.value = { ...automationJob.value, ...latestTask }
     }
@@ -364,6 +437,7 @@ async function pollJobUntilFinished(jobId) {
     try {
       const latestJob = await getPayrollJob(jobId)
       job.value = latestJob
+      rememberTask(latestJob, 'payroll')
 
       if (['success', 'failed'].includes(latestJob.status)) {
         return latestJob
@@ -383,6 +457,7 @@ async function pollFormAutomationJobUntilFinished(jobId) {
     try {
       const latestJob = await getFormAutomationJob(jobId)
       automationJob.value = latestJob
+      rememberTask(latestJob, 'form_automation')
 
       if (['success', 'failed'].includes(latestJob.status)) {
         return latestJob
@@ -417,6 +492,7 @@ async function submitPayrollJob() {
   try {
     const createdJob = await createPayrollJob(formData)
     job.value = createdJob
+    rememberTask(createdJob, 'payroll')
 
     if (['pending', 'running'].includes(createdJob.status)) {
       await pollJobUntilFinished(createdJob.id)
@@ -425,6 +501,7 @@ async function submitPayrollJob() {
     errorMessage.value = error.message || '提交失败，请稍后重试。'
     if (error.payload?.id) {
       job.value = error.payload
+      rememberTask(error.payload, 'payroll')
     }
   } finally {
     isSubmitting.value = false
@@ -469,6 +546,7 @@ async function submitAutomationJob() {
   try {
     const createdJob = await createFormAutomationJob(formData)
     automationJob.value = createdJob
+    rememberTask(createdJob, 'form_automation')
 
     if (['pending', 'running'].includes(createdJob.status)) {
       await pollFormAutomationJobUntilFinished(createdJob.id)
@@ -477,6 +555,7 @@ async function submitAutomationJob() {
     automationErrorMessage.value = error.message || '提交失败，请稍后重试。'
     if (error.payload?.id) {
       automationJob.value = error.payload
+      rememberTask(error.payload, 'form_automation')
     }
   } finally {
     isAutomationSubmitting.value = false
@@ -488,7 +567,48 @@ function downloadAutomationResult() {
   window.location.href = new URL(automationJob.value.download_url, window.location.origin).href
 }
 
+async function restorePersistedJobs() {
+  let retainedTasks
+  try {
+    const response = await getRecentWorkerTasks()
+    retainedTasks = Array.isArray(response.tasks) ? response.tasks : []
+  } catch {
+    return
+  }
+
+  const payrollJobId = retainedTasks.find((task) => task.task_type === 'payroll')?.id
+  const formJobId = retainedTasks.find((task) => task.task_type === 'form_automation')?.id
+
+  if (payrollJobId) {
+    try {
+      const restoredJob = await getPayrollJob(payrollJobId)
+      job.value = restoredJob
+      rememberTask(restoredJob, 'payroll')
+      if (['pending', 'running'].includes(restoredJob.status)) {
+        void pollJobUntilFinished(restoredJob.id)
+      }
+    } catch {}
+  }
+
+  if (formJobId) {
+    try {
+      const restoredJob = await getFormAutomationJob(formJobId)
+      automationJob.value = restoredJob
+      automationType.value = restoredJob.form_type
+      automationSubmitted.value = true
+      rememberTask(restoredJob, 'form_automation')
+      if (['pending', 'running'].includes(restoredJob.status)) {
+        void pollFormAutomationJobUntilFinished(restoredJob.id)
+      }
+    } catch {}
+  }
+}
+
 onMounted(async () => {
+  updateBackToTopVisibility()
+  window.addEventListener('scroll', updateBackToTopVisibility, { passive: true })
+  void restorePersistedJobs()
+
   try {
     const health = await checkPayrollHealth()
     apiHealth.value = {
@@ -523,12 +643,14 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   componentUnmounted = true
   clearTaskQueryTimer()
+  window.removeEventListener('scroll', updateBackToTopVisibility)
   if (adjustmentImagePreview.value) {
     URL.revokeObjectURL(adjustmentImagePreview.value)
   }
 })
 
 watch(automationType, () => {
+  if (automationJob.value?.form_type === automationType.value) return
   automationMessage.value = ''
   automationSubmitted.value = false
   automationJob.value = null
@@ -557,31 +679,56 @@ watch(automationType, () => {
           <span>AVAILABLE NOW</span>
           <ul>
             <li>
-              <strong>任务查询</strong>
-              <small>通过任务 ID 查询处理进度、处理时长、结果和失败原因。</small>
+              <div>
+                <strong>任务查询</strong>
+                <small>通过任务 ID 查询处理进度、处理时长、结果和失败原因。</small>
+              </div>
+              <button type="button" @click="scrollToTool('task-query')">
+                前往 <ArrowDown :size="15" aria-hidden="true" />
+              </button>
             </li>
             <li>
-              <strong>直播监控</strong>
-              <small>查看直播画面、在线人数曲线、飞书告警和监控日志。</small>
+              <div>
+                <strong>直播监控</strong>
+                <small>查看直播画面、在线人数曲线、飞书告警和监控日志。</small>
+              </div>
+              <RouterLink to="/features/live-monitor">
+                进入 <ArrowRight :size="15" aria-hidden="true" />
+              </RouterLink>
             </li>
             <li>
-              <strong>薪资计算</strong>
-              <small>上传排班和主播数据，生成薪资测试文档。</small>
+              <div>
+                <strong>薪资计算</strong>
+                <small>上传排班和主播数据，生成薪资测试文档。</small>
+              </div>
+              <button type="button" @click="scrollToTool('payroll-tool')">
+                前往 <ArrowDown :size="15" aria-hidden="true" />
+              </button>
             </li>
             <li>
-              <strong>报销助手</strong>
-              <small>选择表格类型，下载模板并上传生成材料。</small>
+              <div>
+                <strong>报销助手</strong>
+                <small>选择表格类型，下载模板并上传生成材料。</small>
+              </div>
+              <button type="button" @click="scrollToTool('reimbursement-tool')">
+                前往 <ArrowDown :size="15" aria-hidden="true" />
+              </button>
             </li>
             <li>
-              <strong>测试助手</strong>
-              <small>填写测试日期、直播间、测试人员和调整图示。</small>
+              <div>
+                <strong>测试助手</strong>
+                <small>填写测试日期、直播间、测试人员和调整图示。</small>
+              </div>
+              <button type="button" @click="scrollToTool('test-assistant')">
+                前往 <ArrowDown :size="15" aria-hidden="true" />
+              </button>
             </li>
           </ul>
         </div>
       </div>
     </section>
 
-    <section class="section container live-monitor-entry">
+    <section id="live-monitor" class="section container live-monitor-entry">
       <div>
         <p class="eyebrow">LIVE OPERATIONS</p>
         <h2>直播监控</h2>
@@ -590,7 +737,7 @@ watch(automationType, () => {
       <RouterLink class="primary-button" to="/features/live-monitor">进入直播监控</RouterLink>
     </section>
 
-    <section class="section container tool-module task-query-module">
+    <section id="task-query" class="section container tool-module task-query-module">
       <div class="tool-module-heading">
         <div>
           <p class="eyebrow">WORKER TASKS</p>
@@ -600,22 +747,43 @@ watch(automationType, () => {
       </div>
 
       <div class="task-query-panel">
-        <form class="task-query-form" @submit.prevent="queryWorkerTask">
-          <label for="worker-task-id">任务 ID</label>
-          <div>
-            <input
-              id="worker-task-id"
-              v-model.trim="taskQueryId"
-              type="text"
-              autocomplete="off"
-              placeholder="例如：3aa95efb-5973-4877-8bee-baefa9851372"
-            />
-            <button class="primary-button" type="submit" :disabled="isTaskQuerying">
-              {{ isTaskQuerying ? '查询中...' : '查询任务' }}
+        <div class="task-query-controls">
+          <form class="task-query-form" @submit.prevent="queryWorkerTask">
+            <label for="worker-task-id">任务 ID</label>
+            <div>
+              <input
+                id="worker-task-id"
+                v-model.trim="taskQueryId"
+                type="text"
+                autocomplete="off"
+                placeholder="例如：3aa95efb-5973-4877-8bee-baefa9851372"
+              />
+              <button class="primary-button" type="submit" :disabled="isTaskQuerying">
+                {{ isTaskQuerying ? '查询中...' : '查询任务' }}
+              </button>
+            </div>
+            <p v-if="taskQueryError" class="task-query-error">{{ taskQueryError }}</p>
+          </form>
+
+          <div v-if="recentTasks.length" class="recent-task-list">
+            <div class="recent-task-heading">
+              <History :size="17" aria-hidden="true" />
+              <span>最近任务</span>
+            </div>
+            <button
+              v-for="recentTask in recentTasks"
+              :key="recentTask.id"
+              type="button"
+              @click="selectRecentTask(recentTask.id)"
+            >
+              <span>
+                <strong>{{ recentTask.task_label }}</strong>
+                <small>{{ recentTask.id }}</small>
+              </span>
+              <em :class="`is-${recentTask.outcome}`">{{ recentTask.status_label }}</em>
             </button>
           </div>
-          <p v-if="taskQueryError" class="task-query-error">{{ taskQueryError }}</p>
-        </form>
+        </div>
 
         <article v-if="queriedTask" class="task-query-result">
           <div class="task-query-result-heading">
@@ -681,7 +849,7 @@ watch(automationType, () => {
       </div>
     </section>
 
-    <section class="section container tool-module test-assistant-module">
+    <section id="test-assistant" class="section container tool-module test-assistant-module">
       <div class="tool-module-heading">
         <div>
           <p class="eyebrow">TEST DATA</p>
@@ -763,7 +931,7 @@ watch(automationType, () => {
       </div>
     </section>
 
-    <section class="section container tool-module payroll-tool-module">
+    <section id="payroll-tool" class="section container tool-module payroll-tool-module">
       <div class="tool-module-heading">
         <div>
           <p class="eyebrow">PAYROLL WORKFLOW</p>
@@ -844,7 +1012,7 @@ watch(automationType, () => {
 
         <aside class="tool-result-card">
           <p class="eyebrow">RESULT</p>
-          <h3>计算结果</h3>
+          <h3>处理结果</h3>
 
           <div v-if="!job" class="result-empty">
             <span>尚未提交</span>
@@ -880,6 +1048,13 @@ watch(automationType, () => {
               <progress :value="job.progress ?? 0" max="100">{{ job.progress ?? 0 }}%</progress>
             </div>
 
+            <details v-if="job.files?.length" class="submitted-task-files">
+              <summary>查看已提交文件（{{ job.files.length }}）</summary>
+              <ul>
+                <li v-for="file in job.files" :key="file.field">{{ file.label }}：{{ file.name }}</li>
+              </ul>
+            </details>
+
             <p v-if="job.status === 'success'" class="payroll-success">
               薪资表已生成并通过 Worker 校验，可以下载到本地查看。
             </p>
@@ -902,7 +1077,7 @@ watch(automationType, () => {
       </div>
     </section>
 
-    <section class="section container tool-module reimbursement-tool-module">
+    <section id="reimbursement-tool" class="section container tool-module reimbursement-tool-module">
       <div class="tool-module-heading">
         <div>
           <p class="eyebrow">FORM AUTOMATION</p>
@@ -1015,7 +1190,7 @@ watch(automationType, () => {
 
         <aside class="tool-result-card">
           <p class="eyebrow">RESULT</p>
-          <h3>计算结果</h3>
+          <h3>处理结果</h3>
 
           <div class="result-empty" :class="{ 'is-ready': automationJob?.status === 'success' }">
             <span>{{ automationJob?.status === 'success' ? '已生成' : automationSubmitted && automationSubmitReady ? '材料已提交' : '尚未提交' }}</span>
@@ -1091,6 +1266,18 @@ watch(automationType, () => {
             <progress :value="automationJob.progress ?? 0" max="100">{{ automationJob.progress ?? 0 }}%</progress>
           </div>
 
+          <details v-if="automationJob?.files?.length" class="submitted-task-files">
+            <summary>查看已提交材料（{{ automationJob.files.length }}）</summary>
+            <ul>
+              <li
+                v-for="file in automationJob.files"
+                :key="`${file.group}-${file.name}`"
+              >
+                {{ file.label }}：{{ file.name }}
+              </li>
+            </ul>
+          </details>
+
           <div v-if="automationWarnings.length" class="automation-warning-box">
             <strong>识别提示</strong>
             <ul>
@@ -1109,5 +1296,19 @@ watch(automationType, () => {
         </aside>
       </div>
     </section>
+
+    <Transition name="back-to-top">
+      <button
+        v-if="showBackToTop"
+        class="back-to-top-button"
+        type="button"
+        title="回到顶部"
+        aria-label="回到顶部"
+        @click="scrollToTop"
+      >
+        <ArrowUp :size="21" aria-hidden="true" />
+        <span>回到顶部</span>
+      </button>
+    </Transition>
   </div>
 </template>
