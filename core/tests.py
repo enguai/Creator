@@ -306,10 +306,14 @@ class DouyinMonitorTests(TestCase):
 @override_settings(EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend')
 class AuthenticationTests(TestCase):
     def test_anonymous_user_cannot_access_tools_api(self):
-        response = self.client.get(reverse('payroll-health'))
+        response = self.client.get(reverse('worker-task-recent'))
 
         self.assertEqual(response.status_code, 401)
         self.assertEqual(response.json()['error'], 'authentication_required')
+
+    def test_health_checks_remain_public(self):
+        self.assertEqual(self.client.get(reverse('form-automation-health')).status_code, 200)
+        self.assertEqual(self.client.get(reverse('payroll-health')).status_code, 200)
 
     def test_registration_creates_session_and_security_events(self):
         response = self.client.post(

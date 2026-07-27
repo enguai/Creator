@@ -12,6 +12,8 @@ PUBLIC_API_PATHS = {
     '/api/auth/recover-account/',
     '/api/auth/password-reset/',
     '/api/auth/password-reset-confirm/',
+    '/api/forms/health/',
+    '/api/payroll/health/',
 }
 WORKER_API_PREFIXES = (
     '/api/forms/worker/',
