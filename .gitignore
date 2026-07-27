@@ -11,5 +11,6 @@ start_codex_form_worker.ps1
 frontend/node_modules/
 frontend/dist/
 frontend/.vite/
+staticfiles/
 .DS_Store
 Thumbs.db
