@@ -9,6 +9,7 @@ PUBLIC_API_PATHS = {
     '/api/auth/login/',
     '/api/auth/logout/',
     '/api/auth/register/',
+    '/api/auth/verification-code/',
     '/api/auth/recover-account/',
     '/api/auth/password-reset/',
     '/api/auth/password-reset-confirm/',

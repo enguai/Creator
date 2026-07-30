@@ -1,22 +1,21 @@
 import json
+import re
 import tempfile
 import uuid
 from datetime import timedelta
 from unittest.mock import patch
 from urllib.parse import unquote
 
+from django.contrib import admin
 from django.contrib.auth.models import User
-from django.contrib.auth.tokens import default_token_generator
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core import mail
 from django.test import TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
-from django.utils.encoding import force_bytes
-from django.utils.http import urlsafe_base64_encode
 
 from .douyin_monitor import matches_rule, parse_compact_number, validate_config
-from .models import DouyinMonitorSession, FormAutomationJob, PayrollJob, UserSecurityEvent
+from .models import DouyinMonitorSession, FormAutomationJob, PayrollJob, Profile, UserSecurityEvent
 from .views import serialize_form_automation_job
 
 
@@ -330,26 +329,30 @@ class AuthenticationTests(TestCase):
         self.assertEqual(response.status_code, 201)
         self.assertTrue(response.json()['authenticated'])
         self.assertEqual(response.json()['user']['username'], 'creator-user')
-        self.assertTrue(User.objects.get(username='creator-user').profile)
+        self.assertEqual(User.objects.get(username='creator-user').profile.nickname, 'creator-user')
         self.assertTrue(UserSecurityEvent.objects.filter(event=UserSecurityEvent.Event.REGISTERED).exists())
 
-    def test_password_reset_changes_password(self):
+    def test_password_reset_with_email_code_changes_password(self):
         user = User.objects.create_user('reset-user', 'reset@example.com', 'OldStrongPass123!')
+        Profile.objects.create(user=user, nickname=user.username)
         request_response = self.client.post(
-            reverse('auth-password-reset'),
-            data=json.dumps({'email': user.email}),
+            reverse('auth-verification-code'),
+            data=json.dumps({
+                'channel': 'email',
+                'purpose': 'password_reset',
+                'destination': user.email,
+            }),
             content_type='application/json',
         )
 
         self.assertEqual(request_response.status_code, 200)
         self.assertEqual(len(mail.outbox), 1)
-        uid = urlsafe_base64_encode(force_bytes(user.pk))
-        token = default_token_generator.make_token(user)
+        code = re.search(r'\b\d{6}\b', mail.outbox[0].body).group(0)
         confirm_response = self.client.post(
             reverse('auth-password-reset-confirm'),
             data=json.dumps({
-                'uid': uid,
-                'token': token,
+                'email': user.email,
+                'code': code,
                 'password1': 'NewStrongPass123!',
                 'password2': 'NewStrongPass123!',
             }),
@@ -359,6 +362,55 @@ class AuthenticationTests(TestCase):
         self.assertEqual(confirm_response.status_code, 200)
         user.refresh_from_db()
         self.assertTrue(user.check_password('NewStrongPass123!'))
+
+    def test_phone_code_login_is_not_supported(self):
+        code_response = self.client.post(
+            reverse('auth-verification-code'),
+            data=json.dumps({
+                'channel': 'sms',
+                'purpose': 'phone_login',
+                'destination': '13800138002',
+            }),
+            content_type='application/json',
+        )
+
+        self.assertEqual(code_response.status_code, 400)
+        login_response = self.client.post(
+            reverse('auth-login'),
+            data=json.dumps({
+                'method': 'sms',
+                'phone': '13800138002',
+                'code': '123456',
+            }),
+            content_type='application/json',
+        )
+
+        self.assertEqual(login_response.status_code, 400)
+        self.assertEqual(login_response.json()['message'], '只支持用户名和密码登录。')
+
+    def test_account_recovery_requires_email_code(self):
+        user = User.objects.create_user('recover-user', 'recover@example.com', 'StrongPass123!')
+        Profile.objects.create(user=user, nickname=user.username)
+        code_response = self.client.post(
+            reverse('auth-verification-code'),
+            data=json.dumps({
+                'channel': 'email',
+                'purpose': 'account_recovery',
+                'destination': user.email,
+            }),
+            content_type='application/json',
+        )
+        self.assertEqual(code_response.status_code, 200)
+        code = re.search(r'\b\d{6}\b', mail.outbox[0].body).group(0)
+
+        recovery_response = self.client.post(
+            reverse('auth-recover-account'),
+            data=json.dumps({'email': user.email, 'code': code}),
+            content_type='application/json',
+        )
+
+        self.assertEqual(recovery_response.status_code, 200)
+        self.assertEqual(recovery_response.json()['usernames'], [user.username])
 
     def test_user_cannot_read_another_users_task(self):
         owner = User.objects.create_user('task-owner', 'owner@example.com', 'StrongPass123!')
@@ -407,3 +459,49 @@ class AuthenticationTests(TestCase):
         )
 
         self.assertEqual(blocked.status_code, 429)
+
+
+class AdminUserManagementTests(TestCase):
+    def setUp(self):
+        self.admin_user = User.objects.create_superuser(
+            username='admin-user',
+            email='admin@example.com',
+            password='StrongAdminPass123!',
+        )
+        Profile.objects.create(user=self.admin_user, nickname=self.admin_user.username)
+        self.client.force_login(self.admin_user)
+
+    def test_user_list_is_the_only_user_profile_management_page(self):
+        response = self.client.get(reverse('admin:auth_user_changelist'))
+
+        self.assertEqual(response.status_code, 200)
+        headings = (
+            '\u7528\u6237\u540d',
+            '\u90ae\u7bb1',
+            '\u5bc6\u7801',
+            '\u662f\u5426\u6fc0\u6d3b',
+            '\u6ce8\u518c\u65e5\u671f',
+            '\u6700\u8fd1\u767b\u5f55',
+        )
+        for heading in headings:
+            self.assertContains(response, heading)
+        self.assertNotIn('phone_number', admin.site._registry[User].list_display)
+        self.assertFalse(admin.site.is_registered(Profile))
+
+    def test_admin_can_create_user_profile_together(self):
+        response = self.client.post(
+            reverse('admin:auth_user_add'),
+            data={
+                'username': 'created-in-admin',
+                'email': 'created-in-admin@example.com',
+                'password1': 'StrongCreatedPass123!',
+                'password2': 'StrongCreatedPass123!',
+                'is_active': 'on',
+                '_save': '1',
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        user = User.objects.get(username='created-in-admin')
+        self.assertEqual(user.profile.nickname, user.username)
+        self.assertTrue(user.is_active)

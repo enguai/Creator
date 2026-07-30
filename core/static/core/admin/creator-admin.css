@@ -53,6 +53,12 @@ body,
     color: #ffffff !important;
 }
 
+/* The first item is SimpleUI's injected home entry; the same user page lives in the management group. */
+.menu > .el-menu > div > .el-menu-item:first-child,
+.lite-menus .el-menu > div > .el-menu-item:first-child {
+    display: none !important;
+}
+
 .logo-wrap {
     background: var(--creator-sidebar) !important;
     color: #ffffff !important;

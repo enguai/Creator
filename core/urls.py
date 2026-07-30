@@ -10,6 +10,7 @@ urlpatterns = [
     path('auth/login/', auth_views.login_user, name='auth-login'),
     path('auth/logout/', auth_views.logout_user, name='auth-logout'),
     path('auth/register/', auth_views.register_user, name='auth-register'),
+    path('auth/verification-code/', auth_views.send_verification_code, name='auth-verification-code'),
     path('auth/recover-account/', auth_views.recover_account, name='auth-recover-account'),
     path('auth/password-reset/', auth_views.request_password_reset, name='auth-password-reset'),
     path(

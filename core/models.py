@@ -258,6 +258,7 @@ class UserSecurityEvent(models.Model):
         ACCOUNT_RECOVERY = 'account_recovery', '申请找回账号'
         PASSWORD_RESET_REQUESTED = 'password_reset_requested', '申请重置密码'
         PASSWORD_RESET_COMPLETED = 'password_reset_completed', '密码重置完成'
+        VERIFICATION_CODE_SENT = 'verification_code_sent', '发送验证码'
 
     user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='security_events', verbose_name='用户')
     username = models.CharField('账号', max_length=150, blank=True)
@@ -277,3 +278,36 @@ class UserSecurityEvent(models.Model):
 
     def __str__(self):
         return f'{self.get_event_display()}：{self.username or "匿名用户"}'
+
+
+class VerificationCode(models.Model):
+    class Channel(models.TextChoices):
+        EMAIL = 'email', '邮箱'
+
+    class Purpose(models.TextChoices):
+        ACCOUNT_RECOVERY = 'account_recovery', '找回用户名'
+        PASSWORD_RESET = 'password_reset', '重置密码'
+
+    channel = models.CharField('发送方式', max_length=10, choices=Channel.choices)
+    purpose = models.CharField('使用场景', max_length=30, choices=Purpose.choices)
+    destination = models.CharField('接收地址', max_length=254, db_index=True)
+    code_hash = models.CharField('验证码摘要', max_length=128)
+    request_ip = models.GenericIPAddressField('申请 IP', null=True, blank=True)
+    failed_attempts = models.PositiveSmallIntegerField('错误次数', default=0)
+    expires_at = models.DateTimeField('过期时间')
+    consumed_at = models.DateTimeField('使用时间', null=True, blank=True)
+    created_at = models.DateTimeField('发送时间', auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = '验证码记录'
+        verbose_name_plural = '验证码记录'
+        indexes = [
+            models.Index(
+                fields=['channel', 'purpose', 'destination', 'created_at'],
+                name='verify_code_lookup_idx',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.get_channel_display()}验证码：{self.destination}'

@@ -1,25 +1,33 @@
 import json
+import secrets
 from datetime import timedelta
 
 from django.conf import settings
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.forms import SetPasswordForm, UserCreationForm
+from django.contrib.auth.hashers import check_password, make_password
 from django.contrib.auth.models import User
 from django.contrib.auth.tokens import default_token_generator
-from django.core.mail import send_mail
-from django.db import transaction
+from django.core.exceptions import ValidationError
+from django.core.validators import validate_email
+from django.db import IntegrityError, transaction
 from django.http import JsonResponse
 from django.utils import timezone
-from django.utils.encoding import force_bytes, force_str
-from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
+from django.utils.encoding import force_str
+from django.utils.http import urlsafe_base64_decode
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_GET, require_POST
 
-from .models import Profile, UserSecurityEvent
+from .models import Profile, UserSecurityEvent, VerificationCode
+from .verification import deliver_code
 
 
 LOGIN_FAILURE_LIMIT = 5
 LOGIN_FAILURE_WINDOW_MINUTES = 15
+VERIFICATION_PURPOSE_CHANNELS = {
+    VerificationCode.Purpose.ACCOUNT_RECOVERY: VerificationCode.Channel.EMAIL,
+    VerificationCode.Purpose.PASSWORD_RESET: VerificationCode.Channel.EMAIL,
+}
 
 
 def response_json(data, status=200):
@@ -78,6 +86,120 @@ def is_login_blocked(request, username):
     return events.filter(event=UserSecurityEvent.Event.LOGIN_FAILED).count() >= LOGIN_FAILURE_LIMIT
 
 
+def normalize_destination(channel, value):
+    destination = str(value or '').strip().lower()
+    validate_email(destination)
+    return destination
+
+
+def eligible_users(channel, purpose, destination):
+    return User.objects.filter(email__iexact=destination, is_active=True)
+
+
+def verification_sent_message(channel):
+    return '如果信息匹配，验证码会发送到你的邮箱。'
+
+
+def create_verification_code(request, channel, purpose, destination_value):
+    if VERIFICATION_PURPOSE_CHANNELS.get(purpose) != channel:
+        return response_json({'message': '验证码用途不正确。'}, status=400)
+
+    try:
+        destination = normalize_destination(channel, destination_value)
+    except ValidationError as exc:
+        return response_json({'message': exc.messages[0]}, status=400)
+
+    users = list(eligible_users(channel, purpose, destination)[:2])
+    generic_message = verification_sent_message(channel)
+    if not users:
+        return response_json({'message': generic_message})
+
+    now = timezone.now()
+    VerificationCode.objects.filter(created_at__lt=now - timedelta(days=1)).delete()
+    recent = VerificationCode.objects.filter(
+        channel=channel,
+        purpose=purpose,
+        destination=destination,
+    ).order_by('-created_at').first()
+    if recent:
+        retry_after = settings.VERIFICATION_CODE_COOLDOWN_SECONDS - int((now - recent.created_at).total_seconds())
+        if retry_after > 0:
+            return response_json(
+                {'message': f'请等待 {retry_after} 秒后再次发送。', 'retry_after': retry_after},
+                status=429,
+            )
+
+    today_count = VerificationCode.objects.filter(
+        channel=channel,
+        destination=destination,
+        created_at__gte=now - timedelta(days=1),
+    ).count()
+    if today_count >= settings.VERIFICATION_CODE_DAILY_LIMIT:
+        return response_json({'message': '今天发送次数过多，请明天再试。'}, status=429)
+
+    code = f'{secrets.randbelow(1_000_000):06d}'
+    verification = VerificationCode.objects.create(
+        channel=channel,
+        purpose=purpose,
+        destination=destination,
+        code_hash=make_password(code),
+        request_ip=client_ip(request),
+        expires_at=now + timedelta(minutes=settings.VERIFICATION_CODE_EXPIRE_MINUTES),
+    )
+    try:
+        deliver_code(channel, destination, purpose, code)
+    except Exception as exc:
+        verification.delete()
+        record_event(
+            request,
+            UserSecurityEvent.Event.VERIFICATION_CODE_SENT,
+            user=users[0],
+            details={'channel': channel, 'purpose': purpose, 'sent': False, 'error': str(exc)[:300]},
+        )
+        return response_json({'message': '验证码发送失败，请稍后重试。'}, status=503)
+
+    record_event(
+        request,
+        UserSecurityEvent.Event.VERIFICATION_CODE_SENT,
+        user=users[0],
+        details={'channel': channel, 'purpose': purpose, 'sent': True},
+    )
+    result = {
+        'message': generic_message,
+        'expires_in': settings.VERIFICATION_CODE_EXPIRE_MINUTES * 60,
+        'retry_after': settings.VERIFICATION_CODE_COOLDOWN_SECONDS,
+    }
+    if settings.DEBUG and 'console' in settings.EMAIL_BACKEND:
+        result['debug_code'] = code
+    return response_json(result)
+
+
+def find_verification_code(channel, purpose, destination, code):
+    verification = VerificationCode.objects.filter(
+        channel=channel,
+        purpose=purpose,
+        destination=destination,
+        consumed_at__isnull=True,
+    ).order_by('-created_at').first()
+    now = timezone.now()
+    if not verification or verification.expires_at <= now:
+        return None, '验证码无效或已经过期，请重新获取。'
+    if verification.failed_attempts >= settings.VERIFICATION_CODE_MAX_ATTEMPTS:
+        return None, '验证码错误次数过多，请重新获取。'
+    if not check_password(str(code or '').strip(), verification.code_hash):
+        verification.failed_attempts += 1
+        if verification.failed_attempts >= settings.VERIFICATION_CODE_MAX_ATTEMPTS:
+            verification.consumed_at = now
+        verification.save(update_fields=['failed_attempts', 'consumed_at'])
+        return None, '验证码不正确。'
+    return verification, ''
+
+
+def consume_verification_code(verification):
+    verification.consumed_at = timezone.now()
+    verification.save(update_fields=['consumed_at'])
+
+
 @ensure_csrf_cookie
 @require_GET
 def session_detail(request):
@@ -88,28 +210,39 @@ def session_detail(request):
 
 
 @require_POST
+def send_verification_code(request):
+    payload = request_payload(request)
+    channel = str(payload.get('channel', '')).strip()
+    purpose = str(payload.get('purpose', '')).strip()
+    return create_verification_code(request, channel, purpose, payload.get('destination', ''))
+
+
+@require_POST
 def login_user(request):
     payload = request_payload(request)
+    method = str(payload.get('method', 'password')).strip()
+    if method != 'password':
+        return response_json({'message': '只支持用户名和密码登录。'}, status=400)
+
     username = str(payload.get('username', '')).strip()
     password = str(payload.get('password', ''))
-
     if not username or not password:
-        return response_json({'message': '请输入账号和密码。'}, status=400)
+        return response_json({'message': '请输入用户名和密码。'}, status=400)
     if is_login_blocked(request, username):
         record_event(request, UserSecurityEvent.Event.LOGIN_BLOCKED, username=username)
         return response_json({'message': '登录失败次数过多，请 15 分钟后再试。'}, status=429)
 
     user = authenticate(request, username=username, password=password)
     if user is None:
-        record_event(request, UserSecurityEvent.Event.LOGIN_FAILED, username=username)
-        return response_json({'message': '账号或密码不正确。'}, status=401)
+        record_event(request, UserSecurityEvent.Event.LOGIN_FAILED, username=username, details={'method': 'password'})
+        return response_json({'message': '用户名或密码不正确。'}, status=401)
     if not user.is_active:
-        record_event(request, UserSecurityEvent.Event.LOGIN_FAILED, user=user)
+        record_event(request, UserSecurityEvent.Event.LOGIN_FAILED, user=user, details={'method': 'password'})
         return response_json({'message': '该账号已被停用，请联系管理员。'}, status=403)
 
     login(request, user)
     request.session.set_expiry(settings.SESSION_COOKIE_AGE if payload.get('remember_me') else 0)
-    record_event(request, UserSecurityEvent.Event.LOGIN_SUCCEEDED, user=user)
+    record_event(request, UserSecurityEvent.Event.LOGIN_SUCCEEDED, user=user, details={'method': 'password'})
     return response_json({'authenticated': True, 'user': serialize_user(user)})
 
 
@@ -133,19 +266,25 @@ def register_user(request):
     })
 
     errors = form_errors(form) if not form.is_valid() else {}
-    if not email:
-        errors['email'] = ['请输入用于找回账号和密码的邮箱。']
-    elif User.objects.filter(email__iexact=email).exists():
-        errors['email'] = ['该邮箱已经注册，请直接登录或找回账号。']
+    try:
+        validate_email(email)
+    except ValidationError:
+        errors['email'] = ['请输入正确的邮箱地址。']
+    else:
+        if User.objects.filter(email__iexact=email).exists():
+            errors['email'] = ['该邮箱已经注册，请直接登录或找回用户名。']
     if errors:
         return response_json({'message': '请检查注册信息。', 'field_errors': errors}, status=400)
 
-    with transaction.atomic():
-        user = form.save(commit=False)
-        user.email = email
-        user.save()
-        Profile.objects.get_or_create(user=user, defaults={'nickname': user.username})
-        record_event(request, UserSecurityEvent.Event.REGISTERED, user=user)
+    try:
+        with transaction.atomic():
+            user = form.save(commit=False)
+            user.email = email
+            user.save()
+            Profile.objects.create(user=user, nickname=user.username)
+            record_event(request, UserSecurityEvent.Event.REGISTERED, user=user)
+    except IntegrityError:
+        return response_json({'message': '用户名或邮箱已经被使用。'}, status=400)
 
     login(request, user)
     request.session.set_expiry(0)
@@ -155,78 +294,71 @@ def register_user(request):
 
 @require_POST
 def recover_account(request):
-    email = str(request_payload(request).get('email', '')).strip().lower()
-    if not email:
-        return response_json({'message': '请输入注册邮箱。'}, status=400)
+    payload = request_payload(request)
+    try:
+        email = normalize_destination(VerificationCode.Channel.EMAIL, payload.get('email', ''))
+    except ValidationError:
+        return response_json({'message': '请输入正确的注册邮箱。'}, status=400)
+    verification, error = find_verification_code(
+        VerificationCode.Channel.EMAIL,
+        VerificationCode.Purpose.ACCOUNT_RECOVERY,
+        email,
+        payload.get('code', ''),
+    )
+    if not verification:
+        return response_json({'message': error}, status=400)
 
     users = list(User.objects.filter(email__iexact=email, is_active=True).order_by('date_joined')[:5])
-    if users:
-        account_names = '、'.join(user.username for user in users)
-        try:
-            send_mail(
-                '造物者账号找回',
-                f'该邮箱对应的造物者账号：{account_names}\n\n如果不是你本人操作，请忽略此邮件。',
-                settings.DEFAULT_FROM_EMAIL,
-                [email],
-                fail_silently=False,
-            )
-        except Exception as exc:
-            record_event(
-                request,
-                UserSecurityEvent.Event.ACCOUNT_RECOVERY,
-                username=users[0].username,
-                details={'email_sent': False, 'error': str(exc)[:300]},
-            )
-        else:
-            record_event(
-                request,
-                UserSecurityEvent.Event.ACCOUNT_RECOVERY,
-                username=users[0].username,
-                details={'email_sent': True},
-            )
-    return response_json({'message': '如果该邮箱已注册，账号信息会发送到邮箱。'})
+    if not users:
+        return response_json({'message': '验证码无效或已经过期，请重新获取。'}, status=400)
+    consume_verification_code(verification)
+    account_names = [user.username for user in users]
+    record_event(request, UserSecurityEvent.Event.ACCOUNT_RECOVERY, user=users[0])
+    return response_json({'message': f'你的用户名：{"、".join(account_names)}', 'usernames': account_names})
 
 
 @require_POST
 def request_password_reset(request):
-    email = str(request_payload(request).get('email', '')).strip().lower()
-    if not email:
-        return response_json({'message': '请输入注册邮箱。'}, status=400)
-
-    users = list(User.objects.filter(email__iexact=email, is_active=True).order_by('date_joined')[:5])
-    for user in users:
-        uid = urlsafe_base64_encode(force_bytes(user.pk))
-        token = default_token_generator.make_token(user)
-        base_url = settings.FRONTEND_BASE_URL.rstrip('/') or request.build_absolute_uri('/').rstrip('/')
-        reset_url = f'{base_url}/reset-password/{uid}/{token}'
-        try:
-            send_mail(
-                '重置造物者账号密码',
-                f'请打开下面的链接重置密码，链接仅在限定时间内有效：\n{reset_url}\n\n如果不是你本人操作，请忽略此邮件。',
-                settings.DEFAULT_FROM_EMAIL,
-                [email],
-                fail_silently=False,
-            )
-        except Exception as exc:
-            record_event(
-                request,
-                UserSecurityEvent.Event.PASSWORD_RESET_REQUESTED,
-                user=user,
-                details={'email_sent': False, 'error': str(exc)[:300]},
-            )
-        else:
-            record_event(
-                request,
-                UserSecurityEvent.Event.PASSWORD_RESET_REQUESTED,
-                user=user,
-                details={'email_sent': True},
-            )
-    return response_json({'message': '如果该邮箱已注册，密码重置链接会发送到邮箱。'})
-
-
-@require_POST
-def confirm_password_reset(request):
     payload = request_payload(request)
+    return create_verification_code(
+        request,
+        VerificationCode.Channel.EMAIL,
+        VerificationCode.Purpose.PASSWORD_RESET,
+        payload.get('email', ''),
+    )
+
+
+def confirm_password_with_email_code(request, payload):
+    try:
+        email = normalize_destination(VerificationCode.Channel.EMAIL, payload.get('email', ''))
+    except ValidationError:
+        return response_json({'message': '请输入正确的注册邮箱。'}, status=400)
+    verification, error = find_verification_code(
+        VerificationCode.Channel.EMAIL,
+        VerificationCode.Purpose.PASSWORD_RESET,
+        email,
+        payload.get('code', ''),
+    )
+    if not verification:
+        return response_json({'message': error}, status=400)
+
+    user = User.objects.filter(email__iexact=email, is_active=True).order_by('date_joined').first()
+    if not user:
+        return response_json({'message': '验证码无效或已经过期，请重新获取。'}, status=400)
+    form = SetPasswordForm(user, {
+        'new_password1': str(payload.get('password1', '')),
+        'new_password2': str(payload.get('password2', '')),
+    })
+    if not form.is_valid():
+        return response_json({'message': '请检查新密码。', 'field_errors': form_errors(form)}, status=400)
+
+    form.save()
+    consume_verification_code(verification)
+    record_event(request, UserSecurityEvent.Event.PASSWORD_RESET_COMPLETED, user=user)
+    return response_json({'message': '密码已重置，请使用新密码登录。'})
+
+
+def confirm_password_with_legacy_link(request, payload):
     try:
         user_id = force_str(urlsafe_base64_decode(str(payload.get('uid', ''))))
         user = User.objects.get(pk=user_id, is_active=True)
@@ -236,20 +368,23 @@ def confirm_password_reset(request):
     token = str(payload.get('token', ''))
     if not default_token_generator.check_token(user, token):
         return response_json({'message': '密码重置链接无效或已经过期。'}, status=400)
-
     form = SetPasswordForm(user, {
         'new_password1': str(payload.get('password1', '')),
         'new_password2': str(payload.get('password2', '')),
     })
     if not form.is_valid():
-        return response_json(
-            {'message': '请检查新密码。', 'field_errors': form_errors(form)},
-            status=400,
-        )
-
+        return response_json({'message': '请检查新密码。', 'field_errors': form_errors(form)}, status=400)
     form.save()
     record_event(request, UserSecurityEvent.Event.PASSWORD_RESET_COMPLETED, user=user)
     return response_json({'message': '密码已重置，请使用新密码登录。'})
+
+
+@require_POST
+def confirm_password_reset(request):
+    payload = request_payload(request)
+    if payload.get('email') or payload.get('code'):
+        return confirm_password_with_email_code(request, payload)
+    return confirm_password_with_legacy_link(request, payload)
 
 
 def csrf_failure(request, reason=''):

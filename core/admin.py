@@ -1,5 +1,7 @@
+from django import forms
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
+from django.contrib.auth.forms import UserChangeForm, UserCreationForm
 from django.contrib.auth.models import User
 
 from .models import (
@@ -19,31 +21,100 @@ class CreatorAdminMixin:
     save_on_top = True
 
 
-@admin.register(Profile)
-class ProfileAdmin(CreatorAdminMixin, admin.ModelAdmin):
-    list_display = ('nickname', 'user')
-    search_fields = ('nickname', 'user__username', 'user__email')
-    search_help_text = '可按昵称、账号或邮箱搜索'
-    list_select_related = ('user',)
+def validate_admin_email(email, user=None):
+    email = str(email or '').strip().lower()
+    if not email:
+        raise forms.ValidationError('请输入邮箱。')
+    existing = User.objects.filter(email__iexact=email)
+    if user and user.pk:
+        existing = existing.exclude(pk=user.pk)
+    if existing.exists():
+        raise forms.ValidationError('该邮箱已经被其他用户使用。')
+    return email
 
 
-class ProfileInline(admin.StackedInline):
-    model = Profile
-    extra = 0
-    can_delete = False
-    verbose_name_plural = '用户资料'
+class CreatorUserCreationForm(UserCreationForm):
+    email = forms.EmailField(label='邮箱', required=True)
+
+    class Meta(UserCreationForm.Meta):
+        model = User
+        fields = ('username', 'email')
+
+    def clean_email(self):
+        return validate_admin_email(self.cleaned_data.get('email'))
+
+
+class CreatorUserChangeForm(UserChangeForm):
+    class Meta(UserChangeForm.Meta):
+        model = User
+        fields = '__all__'
+
+    def clean_email(self):
+        return validate_admin_email(self.cleaned_data.get('email'), self.instance)
 
 
 admin.site.unregister(User)
+User._meta.verbose_name = '用户资料'
+User._meta.verbose_name_plural = '用户资料'
 
 
 @admin.register(User)
 class CreatorUserAdmin(CreatorAdminMixin, UserAdmin):
-    list_display = ('username', 'email', 'first_name', 'last_name', 'is_active', 'is_staff', 'date_joined', 'last_login')
-    list_filter = ('is_active', 'is_staff', 'is_superuser', 'date_joined', 'last_login')
-    search_fields = ('username', 'email', 'first_name', 'last_name')
-    search_help_text = '可按账号、邮箱、姓名搜索'
-    inlines = (ProfileInline,)
+    form = CreatorUserChangeForm
+    add_form = CreatorUserCreationForm
+    list_display = (
+        'username',
+        'email_address',
+        'password_status',
+        'active_status',
+        'registered_at',
+        'recent_login',
+    )
+    list_filter = ('is_active', 'date_joined', 'last_login')
+    search_fields = ('username', 'email')
+    search_help_text = '可按用户名或邮箱搜索'
+    ordering = ('username',)
+    readonly_fields = ('date_joined', 'last_login')
+    filter_horizontal = ()
+    fieldsets = (
+        ('账号信息', {'fields': ('username', 'email', 'password', 'is_active')}),
+        ('时间记录', {'fields': ('date_joined', 'last_login')}),
+    )
+    add_fieldsets = (
+        ('新建用户资料', {
+            'classes': ('wide',),
+            'fields': ('username', 'email', 'password1', 'password2', 'is_active'),
+        }),
+    )
+
+    @admin.display(description='密码')
+    def password_status(self, obj):
+        return '已加密' if obj.has_usable_password() else '不可用'
+
+    @admin.display(description='邮箱', ordering='email')
+    def email_address(self, obj):
+        return obj.email
+
+    @admin.display(boolean=True, description='是否激活', ordering='is_active')
+    def active_status(self, obj):
+        return obj.is_active
+
+    @admin.display(description='注册日期', ordering='date_joined')
+    def registered_at(self, obj):
+        return obj.date_joined
+
+    @admin.display(description='最近登录', ordering='last_login')
+    def recent_login(self, obj):
+        return obj.last_login
+
+    def save_model(self, request, obj, form, change):
+        super().save_model(request, obj, form, change)
+        Profile.objects.update_or_create(
+            user=obj,
+            defaults={
+                'nickname': obj.username,
+            },
+        )
 
 
 @admin.register(PayrollJob)
@@ -114,4 +185,4 @@ class UserSecurityEventAdmin(CreatorAdminMixin, admin.ModelAdmin):
         return False
 
     def has_delete_permission(self, request, obj=None):
-        return False
+        return request.user.is_superuser

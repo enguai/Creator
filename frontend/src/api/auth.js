@@ -58,6 +58,10 @@ export function registerAccount(payload) {
   return post('/api/auth/register/', payload)
 }
 
+export function sendVerificationCode(payload) {
+  return post('/api/auth/verification-code/', payload)
+}
+
 export function recoverAccount(payload) {
   return post('/api/auth/recover-account/', payload)
 }

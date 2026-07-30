@@ -119,6 +119,7 @@ main { overflow: hidden; }
 .auth-form { display: grid; gap: 20px; }
 .auth-field { display: grid; gap: 9px; color: var(--wine); font-size: 12px; font-weight: 600; }
 .auth-field > input,
+.auth-code-row input,
 .password-input-wrap input {
   width: 100%;
   height: 52px;
@@ -133,9 +134,33 @@ main { overflow: hidden; }
   padding: 0 15px;
 }
 .auth-field > input:focus,
+.auth-code-row input:focus,
 .password-input-wrap input:focus { border-color: var(--wine); box-shadow: 0 0 0 3px rgba(90, 38, 42, .07); }
+.auth-code-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 146px;
+  gap: 10px;
+}
+.auth-code-row button {
+  display: inline-flex;
+  height: 52px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 1px solid var(--wine);
+  background: #fff;
+  color: var(--wine);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+}
+.auth-code-row button:disabled { cursor: not-allowed; opacity: .5; }
 .password-input-wrap { position: relative; }
 .password-input-wrap input { padding-right: 52px; }
+.password-input-wrap input::-ms-reveal,
+.password-input-wrap input::-ms-clear {
+  display: none;
+}
 .password-input-wrap button {
   position: absolute;
   top: 1px;
@@ -154,6 +179,7 @@ main { overflow: hidden; }
 .auth-login-options { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
 .auth-login-options label { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; }
 .auth-login-options input { width: 15px; height: 15px; accent-color: var(--wine); }
+.auth-recovery-links { display: inline-flex; align-items: center; gap: 16px; }
 .auth-login-options a,
 .auth-secondary-links a { color: var(--wine); font-size: 12px; border-bottom: 1px solid rgba(90, 38, 42, .32); }
 .auth-message { margin: 0; padding: 12px 14px; font-size: 12px; line-height: 1.7; }

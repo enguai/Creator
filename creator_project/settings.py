@@ -13,8 +13,11 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 import os
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+load_dotenv(BASE_DIR / '.env')
 
 
 def env_bool(name, default=False):
@@ -164,16 +167,18 @@ SIMPLEUI_ANALYSIS = False
 SIMPLEUI_HOME_ACTION = False
 SIMPLEUI_LOGO = '/static/core/admin/creator-logo.jpg'
 SIMPLEUI_DEFAULT_THEME = 'creator.css'
+SIMPLEUI_HOME_PAGE = '/admin/auth/user/'
+SIMPLEUI_HOME_TITLE = '用户资料'
+SIMPLEUI_HOME_ICON = 'far fa-id-card'
 SIMPLEUI_CONFIG = {
     'system_keep': False,
-    'menu_display': ['用户管理', '任务管理', '直播监控', '安全审计'],
+    'menu_display': ['用户信息管理', '任务管理', '直播监控管理', '安全管理'],
     'menus': [
         {
-            'name': '用户管理',
+            'name': '用户信息管理',
             'icon': 'fas fa-users',
             'models': [
-                {'name': '用户账号', 'icon': 'far fa-user', 'url': '/admin/auth/user/'},
-                {'name': '用户资料', 'icon': 'far fa-id-card', 'url': '/admin/core/profile/'},
+                {'name': '用户资料', 'icon': 'far fa-id-card', 'url': '/admin/auth/user/'},
                 {'name': '权限组', 'icon': 'fas fa-user-shield', 'url': '/admin/auth/group/'},
             ],
         },
@@ -186,7 +191,7 @@ SIMPLEUI_CONFIG = {
             ],
         },
         {
-            'name': '直播监控',
+            'name': '直播监控管理',
             'icon': 'fas fa-video',
             'models': [
                 {'name': '监控记录', 'icon': 'fas fa-chart-line', 'url': '/admin/core/douyinmonitorsession/'},
@@ -194,7 +199,7 @@ SIMPLEUI_CONFIG = {
             ],
         },
         {
-            'name': '安全审计',
+            'name': '安全管理',
             'icon': 'fas fa-shield-halved',
             'models': [
                 {'name': '用户安全日志', 'icon': 'fas fa-clock-rotate-left', 'url': '/admin/core/usersecurityevent/'},
@@ -224,6 +229,11 @@ EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER', '')
 EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD', '')
 EMAIL_USE_TLS = env_bool('EMAIL_USE_TLS', True)
 DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', '造物者 <no-reply@creatorlive.online>')
+
+VERIFICATION_CODE_EXPIRE_MINUTES = int(os.environ.get('VERIFICATION_CODE_EXPIRE_MINUTES', '10'))
+VERIFICATION_CODE_COOLDOWN_SECONDS = int(os.environ.get('VERIFICATION_CODE_COOLDOWN_SECONDS', '60'))
+VERIFICATION_CODE_MAX_ATTEMPTS = int(os.environ.get('VERIFICATION_CODE_MAX_ATTEMPTS', '5'))
+VERIFICATION_CODE_DAILY_LIMIT = int(os.environ.get('VERIFICATION_CODE_DAILY_LIMIT', '10'))
 
 # Enable these only after the production HTTPS certificate is active.
 SECURE_SSL_REDIRECT = env_bool('DJANGO_SECURE_SSL_REDIRECT', False)
