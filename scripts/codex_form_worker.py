@@ -417,13 +417,14 @@ def build_payroll_prompt(job_payload: dict, local_assets: list[tuple[dict, Path]
 
 必须遵守：
 1. 先读取 live-payroll 的 SKILL.md、references/rules.md 和 references/schedule-json.md；按对应直播间规则处理，不得使用测试工资表或简化占位表。
-2. 读取三张排班表和主播数据，将可确认的排班整理为 schedule JSON，再运行 live-payroll 的 generate_payroll.mjs 和 verify_payroll.mjs。
-3. 不向网站用户追问，也不等待交互；仅以可见材料为依据，不能确认的信息不得编造。若材料不足以安全计算，停止生成并在最终消息中清楚说明缺失或歧义原因。
-4. 必须保留对应直播间模板中的工作表、合并单元格、公式、格式、支付关联与统计模块；生成新的 .xlsx，不得修改 skill 的源模板。
-5. 生成后必须执行校验并完成最终视觉检查。
-6. 最终只生成一个 .xlsx 文件，保存到以下绝对路径：
+2. 读取 schedule_image 中合并展示的主播排班、场控排班和试播间排班，并结合 host_data 兼职主播数据表，将所有可确认内容整理为一个 schedule JSON，再运行 live-payroll 的 generate_payroll.mjs 和 verify_payroll.mjs。若收到的是旧任务的三张排班文件，也要兼容读取。
+3. rating_update 是可选的兼职评级更新图。若已提供：先读取所选直播间现有完整评级数据，再把图片中明确列出的老兼职变更和新兼职记录合并进去；未列出人员继续沿用现有评级。评级数据和配置只能复制到本任务目录后修改，严禁改动 live-payroll skill 内的源模板、配置或评级文件。若未提供，则完全沿用 skill 当前评级数据。
+4. 不向网站用户追问，也不等待交互；仅以可见材料为依据，不能确认的信息不得编造。若材料不足以安全计算，停止生成并在最终消息中清楚说明缺失或歧义原因。
+5. 必须保留对应直播间模板的布局、合并单元格、公式、格式、支付关联与统计口径；生成新的 .xlsx，不得修改 skill 的源模板。
+6. 生成后必须执行校验并完成最终视觉检查。
+7. 最终只生成一个 .xlsx 文件，保存到以下绝对路径：
    {output_path}
-7. 完成后确认文件存在，并在最终消息简短说明生成与校验结果。
+8. 完成后确认文件存在，并在最终消息简短说明生成与校验结果。
 
 上传材料：
 {materials}

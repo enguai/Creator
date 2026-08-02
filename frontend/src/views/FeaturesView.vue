@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import { ArrowDown, ArrowRight, ArrowUp, History } from '@lucide/vue'
+import { ArrowDown, ArrowRight, ArrowUp, ClipboardPaste, History, Upload, X } from '@lucide/vue'
 
 import { checkFormAutomationHealth, createFormAutomationJob, getFormAutomationJob, getRecentWorkerTasks, getWorkerTask } from '../api/forms'
 import { checkPayrollHealth, createPayrollJob, getPayrollJob } from '../api/payroll'
@@ -25,24 +25,28 @@ function retainRelevantTasks(tasks) {
 
 const payrollFiles = [
   {
-    key: 'host_schedule',
-    label: '主播排班表',
-    hint: '上传主播本周排班文件，后续用于识别主播出勤与班次。',
-  },
-  {
-    key: 'controller_schedule',
-    label: '场控排班表',
-    hint: '上传场控本周排班文件，后续用于识别场控时段、双岗小时等信息。',
-  },
-  {
-    key: 'trial_schedule',
-    label: '试播间排班表',
-    hint: '上传试播间安排文件，后续用于识别试播人员与试播时长。',
+    key: 'schedule_image',
+    label: '排班表图片',
+    hint: '同一张图片需包含主播排班、场控排班和试播间排班。',
+    accept: '.png,.jpg,.jpeg,.webp',
+    kind: 'image',
+    required: true,
   },
   {
     key: 'host_data',
-    label: '主播数据',
-    hint: '上传主播数据表，后续用于读取直播时长、消耗、ROI 等数据。',
+    label: '兼职主播数据表',
+    hint: '用于读取主播直播时长、消耗、ROI 等计算数据。',
+    accept: '.xlsx,.xls,.xlsm',
+    kind: 'spreadsheet',
+    required: true,
+  },
+  {
+    key: 'rating_update',
+    label: '兼职评级更新',
+    hint: '仅在老兼职评级变动或新兼职加入时提供，未更新可留空。',
+    accept: '.png,.jpg,.jpeg,.webp',
+    kind: 'image',
+    required: false,
   },
 ]
 
@@ -116,10 +120,14 @@ const taskQueryError = ref('')
 const isTaskQuerying = ref(false)
 const recentTasks = ref([])
 const showBackToTop = ref(false)
+const activePayrollPasteTarget = ref('schedule_image')
 let taskQueryTimer = null
 let componentUnmounted = false
 
-const canSubmit = computed(() => payrollFiles.every((item) => selectedFiles[item.key]) && !isSubmitting.value)
+const canSubmit = computed(() => (
+  payrollFiles.filter((item) => item.required).every((item) => selectedFiles[item.key])
+  && !isSubmitting.value
+))
 
 const payrollCapabilities = computed(() => apiHealth.value.capabilities || {})
 
@@ -222,6 +230,96 @@ const formattedTestDate = computed(() => {
 function handleFileChange(key, event) {
   const [file] = event.target.files
   selectedFiles[key] = file || null
+  activePayrollPasteTarget.value = key
+}
+
+function payrollFileMatches(item, file) {
+  const filename = file?.name?.toLowerCase() || ''
+  if (item.kind === 'image') {
+    return file?.type?.startsWith('image/') || /\.(png|jpe?g|webp)$/.test(filename)
+  }
+  return /\.(xlsx|xls|xlsm)$/.test(filename) || [
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'application/vnd.ms-excel',
+  ].includes(file?.type)
+}
+
+function setPastedPayrollFile(item, file) {
+  if (!file || !payrollFileMatches(item, file)) {
+    errorMessage.value = `${item.label}的剪切板内容格式不正确。`
+    return false
+  }
+  const hasExpectedExtension = item.kind === 'image'
+    ? /\.(png|jpe?g|webp)$/i.test(file.name)
+    : /\.(xlsx|xls|xlsm)$/i.test(file.name)
+  selectedFiles[item.key] = hasExpectedExtension
+    ? file
+    : new File([file], clipboardFilename(item, file.type), { type: file.type })
+  activePayrollPasteTarget.value = item.key
+  errorMessage.value = ''
+  return true
+}
+
+function clipboardFilename(item, mimeType) {
+  const extensionByType = {
+    'image/png': 'png',
+    'image/jpeg': 'jpg',
+    'image/webp': 'webp',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
+    'application/vnd.ms-excel': 'xls',
+  }
+  const extension = extensionByType[mimeType] || (item.kind === 'image' ? 'png' : 'xlsx')
+  return `clipboard-${item.key}-${Date.now()}.${extension}`
+}
+
+async function pastePayrollFile(item) {
+  activePayrollPasteTarget.value = item.key
+  if (!navigator.clipboard?.read) {
+    errorMessage.value = '当前浏览器不支持按钮读取剪切板，请选中上传框后按 Ctrl+V。'
+    return
+  }
+
+  try {
+    const clipboardItems = await navigator.clipboard.read()
+    for (const clipboardItem of clipboardItems) {
+      const matchingType = clipboardItem.types.find((type) => {
+        if (item.kind === 'image') return type.startsWith('image/')
+        return [
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          'application/vnd.ms-excel',
+        ].includes(type)
+      })
+      if (!matchingType) continue
+      const blob = await clipboardItem.getType(matchingType)
+      const file = new File([blob], clipboardFilename(item, matchingType), { type: matchingType })
+      if (setPastedPayrollFile(item, file)) return
+    }
+    errorMessage.value = `剪切板中没有可用于${item.label}的文件。`
+  } catch {
+    errorMessage.value = '无法读取剪切板，请允许浏览器访问剪切板后重试。'
+  }
+}
+
+function handlePayrollPaste(event) {
+  const files = Array.from(event.clipboardData?.files || [])
+  if (!files.length) return
+
+  const preferredItem = payrollFiles.find((item) => item.key === activePayrollPasteTarget.value)
+  const item = (
+    (preferredItem && payrollFileMatches(preferredItem, files[0]) ? preferredItem : null)
+    || payrollFiles.find((candidate) => payrollFileMatches(candidate, files[0]) && !selectedFiles[candidate.key])
+    || payrollFiles.find((candidate) => payrollFileMatches(candidate, files[0]))
+  )
+
+  if (!item) return
+  event.preventDefault()
+  setPastedPayrollFile(item, files[0])
+}
+
+function clearPayrollFile(key) {
+  selectedFiles[key] = null
+  const fileInput = document.getElementById(`payroll-file-${key}`)
+  if (fileInput) fileInput.value = ''
 }
 
 function formatFileSize(file) {
@@ -474,7 +572,7 @@ async function submitPayrollJob() {
   job.value = null
 
   if (!canSubmit.value) {
-    errorMessage.value = '请先上传全部四个文件。'
+    errorMessage.value = '请先上传排班表图片和兼职主播数据表。'
     return
   }
 
@@ -484,7 +582,9 @@ async function submitPayrollJob() {
   if (weekEnd.value) formData.append('week_end', weekEnd.value)
 
   payrollFiles.forEach((item) => {
-    formData.append(item.key, selectedFiles[item.key])
+    if (selectedFiles[item.key]) {
+      formData.append(item.key, selectedFiles[item.key])
+    }
   })
 
   isSubmitting.value = true
@@ -607,6 +707,7 @@ async function restorePersistedJobs() {
 onMounted(async () => {
   updateBackToTopVisibility()
   window.addEventListener('scroll', updateBackToTopVisibility, { passive: true })
+  window.addEventListener('paste', handlePayrollPaste)
   void restorePersistedJobs()
 
   try {
@@ -644,6 +745,7 @@ onBeforeUnmount(() => {
   componentUnmounted = true
   clearTaskQueryTimer()
   window.removeEventListener('scroll', updateBackToTopVisibility)
+  window.removeEventListener('paste', handlePayrollPaste)
   if (adjustmentImagePreview.value) {
     URL.revokeObjectURL(adjustmentImagePreview.value)
   }
@@ -699,7 +801,7 @@ watch(automationType, () => {
             <li>
               <div>
                 <strong>薪资计算</strong>
-                <small>上传排班和主播数据，生成薪资测试文档。</small>
+                <small>上传综合排班图和兼职主播数据表，生成正式薪资表。</small>
               </div>
               <button type="button" @click="scrollToTool('payroll-tool')">
                 前往 <ArrowDown :size="15" aria-hidden="true" />
@@ -937,8 +1039,8 @@ watch(automationType, () => {
           <p class="eyebrow">PAYROLL WORKFLOW</p>
           <h2>薪资计算</h2>
           <p>
-            上传主播排班、场控排班、试播间排班和主播数据后，任务会进入 Windows Codex Worker 队列，
-            按 live-payroll 规则生成对应直播间的正式薪资表，并在完成后提供下载。
+            上传一张综合排班图和兼职主播数据表后，任务会进入 Windows Codex Worker 队列；
+            如有人员评级变动，可补充评级更新图，并按 live-payroll 规则生成正式薪资表。
           </p>
         </div>
         <div class="payroll-api-status" :class="`is-${apiHealth.status}`">
@@ -955,7 +1057,7 @@ watch(automationType, () => {
               <p class="eyebrow">UPLOAD FILES</p>
               <h3>上传计算薪资所需信息</h3>
             </div>
-            <small>支持 Excel、CSV、PDF、图片等常见文件格式；单次提交总上传上限 200MB。</small>
+            <small>必需 2 项，可选 1 项；支持选择文件或粘贴剪切板文件。</small>
           </div>
 
           <div class="payroll-options">
@@ -979,17 +1081,50 @@ watch(automationType, () => {
           </div>
 
           <div class="payroll-upload-grid">
-            <label v-for="item in payrollFiles" :key="item.key" class="payroll-upload-card">
+            <div
+              v-for="item in payrollFiles"
+              :key="item.key"
+              class="payroll-upload-card"
+              :class="{ 'is-selected': selectedFiles[item.key] }"
+              tabindex="0"
+              @focus="activePayrollPasteTarget = item.key"
+              @click="activePayrollPasteTarget = item.key"
+            >
+              <div class="payroll-upload-label">
+                <span>{{ item.label }}</span>
+                <em>{{ item.required ? '必需' : '可选' }}</em>
+              </div>
+              <strong>{{ selectedFiles[item.key]?.name || '尚未选择文件' }}</strong>
+              <small v-if="selectedFiles[item.key]">{{ formatFileSize(selectedFiles[item.key]) }}</small>
+              <p>{{ item.hint }}</p>
               <input
+                :id="`payroll-file-${item.key}`"
+                class="payroll-file-input"
                 type="file"
-                accept=".xlsx,.xls,.csv,.pdf,.png,.jpg,.jpeg,.webp"
+                :accept="item.accept"
                 @change="handleFileChange(item.key, $event)"
               />
-              <span>{{ item.label }}</span>
-              <strong>{{ selectedFiles[item.key]?.name || '点击选择文件' }}</strong>
-              <em v-if="selectedFiles[item.key]">{{ formatFileSize(selectedFiles[item.key]) }}</em>
-              <p>{{ item.hint }}</p>
-            </label>
+              <div class="payroll-upload-actions">
+                <label :for="`payroll-file-${item.key}`">
+                  <Upload :size="15" aria-hidden="true" />
+                  <span>选择文件</span>
+                </label>
+                <button type="button" @click="pastePayrollFile(item)">
+                  <ClipboardPaste :size="15" aria-hidden="true" />
+                  <span>粘贴剪切板</span>
+                </button>
+                <button
+                  v-if="selectedFiles[item.key]"
+                  class="payroll-clear-file"
+                  type="button"
+                  :aria-label="`清除${item.label}`"
+                  :title="`清除${item.label}`"
+                  @click="clearPayrollFile(item.key)"
+                >
+                  <X :size="16" aria-hidden="true" />
+                </button>
+              </div>
+            </div>
           </div>
 
           <div v-if="errorMessage" class="payroll-error-box">
@@ -1016,7 +1151,7 @@ watch(automationType, () => {
 
           <div v-if="!job" class="result-empty">
             <span>尚未提交</span>
-            <p>上传四个文件后点击提交，Windows Worker 会按规则生成可下载的薪资表。</p>
+            <p>上传综合排班图和兼职主播数据表后，Windows Worker 会按规则生成可下载的薪资表。</p>
             <p>处理时长：尚未开始</p>
           </div>
 

@@ -10,6 +10,11 @@ def payroll_output_path(instance, filename):
     return f'payroll/{instance.id}/outputs/{safe_name}'
 
 
+def payroll_schedule_image_path(instance, filename):
+    safe_name = get_valid_filename(filename)
+    return f'payroll/{instance.id}/uploads/schedule_image/{safe_name}'
+
+
 def payroll_host_schedule_path(instance, filename):
     safe_name = get_valid_filename(filename)
     return f'payroll/{instance.id}/uploads/host_schedule/{safe_name}'
@@ -28,6 +33,11 @@ def payroll_trial_schedule_path(instance, filename):
 def payroll_host_data_path(instance, filename):
     safe_name = get_valid_filename(filename)
     return f'payroll/{instance.id}/uploads/host_data/{safe_name}'
+
+
+def payroll_rating_update_path(instance, filename):
+    safe_name = get_valid_filename(filename)
+    return f'payroll/{instance.id}/uploads/rating_update/{safe_name}'
 
 
 def form_output_path(instance, filename):
@@ -81,10 +91,12 @@ class PayrollJob(models.Model):
         choices=Status.choices,
         default=Status.PENDING,
     )
-    host_schedule = models.FileField('主播排班表', upload_to=payroll_host_schedule_path)
-    controller_schedule = models.FileField('中控排班表', upload_to=payroll_controller_schedule_path)
-    trial_schedule = models.FileField('试播排班表', upload_to=payroll_trial_schedule_path)
-    host_data = models.FileField('主播数据', upload_to=payroll_host_data_path)
+    schedule_image = models.FileField('综合排班表图片', upload_to=payroll_schedule_image_path, blank=True)
+    host_schedule = models.FileField('主播排班表（旧版）', upload_to=payroll_host_schedule_path, blank=True)
+    controller_schedule = models.FileField('场控排班表（旧版）', upload_to=payroll_controller_schedule_path, blank=True)
+    trial_schedule = models.FileField('试播排班表（旧版）', upload_to=payroll_trial_schedule_path, blank=True)
+    host_data = models.FileField('兼职主播数据表', upload_to=payroll_host_data_path)
+    rating_update = models.FileField('兼职评级更新', upload_to=payroll_rating_update_path, blank=True)
     result_file = models.FileField('结果文件', upload_to=payroll_output_path, blank=True)
     summary = models.JSONField('处理摘要', default=dict, blank=True)
     progress = models.PositiveSmallIntegerField('处理进度（%）', default=0)

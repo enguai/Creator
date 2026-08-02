@@ -8,12 +8,31 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
 
-FILE_LABELS = (
-    ('host_schedule', '主播排班表'),
-    ('controller_schedule', '场控排班表'),
-    ('trial_schedule', '试播间排班表'),
-    ('host_data', '主播数据'),
+REQUIRED_FILE_LABELS = (
+    ('schedule_image', '排班表图片'),
+    ('host_data', '兼职主播数据表'),
 )
+
+OPTIONAL_FILE_LABELS = (
+    ('rating_update', '兼职评级更新'),
+)
+
+FILE_LABELS = REQUIRED_FILE_LABELS + OPTIONAL_FILE_LABELS
+
+LEGACY_FILE_LABELS = (
+    ('host_schedule', '主播排班表（旧版）'),
+    ('controller_schedule', '场控排班表（旧版）'),
+    ('trial_schedule', '试播间排班表（旧版）'),
+    ('host_data', '兼职主播数据表'),
+)
+
+
+def file_labels_for_job(job):
+    if job.schedule_image or job.rating_update:
+        return FILE_LABELS
+    if job.host_schedule or job.controller_schedule or job.trial_schedule:
+        return LEGACY_FILE_LABELS
+    return FILE_LABELS
 
 
 def _file_summary(job, field_name):
@@ -92,13 +111,17 @@ def generate_placeholder_payroll(job):
     row += 1
 
     status_notes = {
-        'host_schedule': '已保存；下一步由截图识别转换为排班 JSON',
-        'controller_schedule': '已保存；下一步由截图识别转换为场控班次',
-        'trial_schedule': '已保存；下一步由截图识别转换为试播/彩排班次',
+        'schedule_image': '已保存；将识别主播、场控和试播间排班',
         'host_data': '已保存；本文件会尝试读取并生成预览',
+        'rating_update': '已保存；将仅更新图片中明确列出的兼职评级',
+        'host_schedule': '旧版文件已保存；将识别主播排班',
+        'controller_schedule': '旧版文件已保存；将识别场控排班',
+        'trial_schedule': '旧版文件已保存；将识别试播间排班',
     }
 
-    for field_name, label in FILE_LABELS:
+    for field_name, label in file_labels_for_job(job):
+        if not getattr(job, field_name):
+            continue
         summary = _file_summary(job, field_name)
         summary_sheet.append([
             label,
@@ -112,7 +135,7 @@ def generate_placeholder_payroll(job):
     summary_sheet.cell(
         row=row,
         column=1,
-        value='说明：正式薪资计算还需要把三张排班截图转成结构化排班 JSON。当前本地第二步已经把网站后端处理链路打通，后续可直接替换为 live-payroll 规则引擎。',
+        value='说明：正式薪资计算需要把综合排班图转成结构化排班 JSON，并结合兼职主播数据与可选评级更新执行 live-payroll 规则。',
     )
     summary_sheet.cell(row=row, column=1).alignment = Alignment(wrap_text=True, vertical='top')
     summary_sheet.row_dimensions[row].height = 54

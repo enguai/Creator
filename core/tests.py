@@ -16,7 +16,7 @@ from django.utils import timezone
 
 from .douyin_monitor import matches_rule, parse_compact_number, validate_config
 from .models import DouyinMonitorSession, FormAutomationJob, PayrollJob, Profile, UserSecurityEvent
-from .views import serialize_form_automation_job
+from .views import serialize_form_automation_job, serialize_payroll_job
 
 
 class WorkerQueueTests(TestCase):
@@ -59,10 +59,9 @@ class WorkerQueueTests(TestCase):
             owner=self.user,
             room_type='z3-polish',
             status=PayrollJob.Status.PENDING,
-            host_schedule=SimpleUploadedFile('host.xlsx', b'host'),
-            controller_schedule=SimpleUploadedFile('controller.xlsx', b'controller'),
-            trial_schedule=SimpleUploadedFile('trial.xlsx', b'trial'),
+            schedule_image=SimpleUploadedFile('schedule.png', b'schedule', content_type='image/png'),
             host_data=SimpleUploadedFile('data.xlsx', b'data'),
+            rating_update=SimpleUploadedFile('rating.png', b'rating', content_type='image/png'),
         )
 
     def test_form_job_is_claimed_only_once(self):
@@ -198,7 +197,89 @@ class WorkerQueueTests(TestCase):
         self.assertEqual(payload['outcome'], 'processing')
         self.assertEqual(payload['progress'], 5)
         self.assertEqual(payload['attempt_count'], 1)
-        self.assertEqual(len(payload['files']), 4)
+        self.assertEqual(len(payload['files']), 3)
+
+    def test_payroll_submission_accepts_two_required_files_and_optional_rating_update(self):
+        response = self.client.post(
+            reverse('payroll-job-create'),
+            data={
+                'room_type': 'z2-eye',
+                'schedule_image': SimpleUploadedFile('schedule.png', b'schedule', content_type='image/png'),
+                'host_data': SimpleUploadedFile('host-data.xlsx', b'data'),
+                'rating_update': SimpleUploadedFile('ratings.png', b'ratings', content_type='image/png'),
+            },
+        )
+
+        self.assertEqual(response.status_code, 201)
+        payload = response.json()
+        self.assertEqual([item['field'] for item in payload['files']], [
+            'schedule_image',
+            'host_data',
+            'rating_update',
+        ])
+        job = PayrollJob.objects.get(id=payload['id'])
+        self.assertFalse(job.host_schedule)
+        self.assertTrue(job.summary['rating_update_supplied'])
+
+    def test_payroll_submission_accepts_no_rating_update(self):
+        response = self.client.post(
+            reverse('payroll-job-create'),
+            data={
+                'room_type': 'z4-neck',
+                'schedule_image': SimpleUploadedFile('schedule.jpg', b'schedule', content_type='image/jpeg'),
+                'host_data': SimpleUploadedFile('host-data.xlsx', b'data'),
+            },
+        )
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(
+            [item['field'] for item in response.json()['files']],
+            ['schedule_image', 'host_data'],
+        )
+
+    def test_payroll_submission_rejects_missing_combined_schedule_image(self):
+        response = self.client.post(
+            reverse('payroll-job-create'),
+            data={
+                'room_type': 'z3-polish',
+                'host_data': SimpleUploadedFile('host-data.xlsx', b'data'),
+            },
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()['missing_files'], ['schedule_image'])
+
+    def test_payroll_submission_rejects_wrong_file_types(self):
+        response = self.client.post(
+            reverse('payroll-job-create'),
+            data={
+                'room_type': 'z3-polish',
+                'schedule_image': SimpleUploadedFile('schedule.pdf', b'schedule', content_type='application/pdf'),
+                'host_data': SimpleUploadedFile('host-data.csv', b'data', content_type='text/csv'),
+            },
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()['invalid_files'], ['schedule_image', 'host_data'])
+
+    def test_legacy_payroll_jobs_keep_their_original_file_list(self):
+        job = PayrollJob.objects.create(
+            owner=self.user,
+            room_type='z4-neck',
+            host_schedule=SimpleUploadedFile('host.xlsx', b'host'),
+            controller_schedule=SimpleUploadedFile('controller.xlsx', b'controller'),
+            trial_schedule=SimpleUploadedFile('trial.xlsx', b'trial'),
+            host_data=SimpleUploadedFile('data.xlsx', b'data'),
+        )
+
+        payload = serialize_payroll_job(job)
+
+        self.assertEqual([item['field'] for item in payload['files']], [
+            'host_schedule',
+            'controller_schedule',
+            'trial_schedule',
+            'host_data',
+        ])
 
     def test_unified_task_query_uses_the_same_processing_duration_as_job_payload(self):
         started_at = timezone.now() - timedelta(seconds=65)

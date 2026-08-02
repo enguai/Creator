@@ -67,9 +67,11 @@ class Command(BaseCommand):
             return
 
         for field_name in (
+            'schedule_image',
             'host_schedule',
             'controller_schedule',
             'trial_schedule',
             'host_data',
+            'rating_update',
         ):
             self._delete_file(getattr(job, field_name))

@@ -27,7 +27,13 @@ from .form_automation import (
     setting_or_env as form_setting_or_env,
 )
 from .models import FormAutomationAsset, FormAutomationJob, PayrollJob
-from .payroll import FILE_LABELS
+from .payroll import (
+    FILE_LABELS,
+    LEGACY_FILE_LABELS,
+    OPTIONAL_FILE_LABELS,
+    REQUIRED_FILE_LABELS,
+    file_labels_for_job,
+)
 
 
 def api_response(data, status=200):
@@ -321,7 +327,8 @@ def payroll_worker_job_payload(request, job):
         'job': serialize_payroll_job(job),
         'assets': [
             payroll_worker_asset_payload(request, job, field_name, label)
-            for field_name, label in FILE_LABELS
+            for field_name, label in file_labels_for_job(job)
+            if getattr(job, field_name)
         ],
         'complete_url': request.build_absolute_uri(
             reverse('payroll-worker-job-complete', args=[job.id])
@@ -360,7 +367,7 @@ def serialize_payroll_job(job):
                 'name': getattr(job, field_name).name.split('/')[-1],
                 'size': getattr(job, field_name).size,
             }
-            for field_name, label in FILE_LABELS
+            for field_name, label in file_labels_for_job(job)
             if getattr(job, field_name)
         ],
     }
@@ -589,7 +596,7 @@ def create_payroll_job(request):
             status=400,
         )
 
-    required_files = [field_name for field_name, _label in FILE_LABELS]
+    required_files = [field_name for field_name, _label in REQUIRED_FILE_LABELS]
     missing_files = [field_name for field_name in required_files if field_name not in uploaded_files]
 
     if missing_files:
@@ -597,14 +604,19 @@ def create_payroll_job(request):
         return api_response(
             {
                 'error': 'missing_files',
-                'message': '请上传全部四个薪资计算文件。',
+                'message': '请上传排班表图片和兼职主播数据表。',
                 'missing_files': missing_files,
                 'missing_file_labels': [label_map[field_name] for field_name in missing_files],
             },
             status=400,
         )
 
-    empty_files = [field_name for field_name in required_files if uploaded_files[field_name].size == 0]
+    submitted_fields = required_files + [
+        field_name
+        for field_name, _label in OPTIONAL_FILE_LABELS
+        if field_name in uploaded_files
+    ]
+    empty_files = [field_name for field_name in submitted_fields if uploaded_files[field_name].size == 0]
     if empty_files:
         label_map = dict(FILE_LABELS)
         return api_response(
@@ -613,6 +625,28 @@ def create_payroll_job(request):
                 'message': '有文件大小为 0，请重新选择后再提交。',
                 'empty_files': empty_files,
                 'empty_file_labels': [label_map[field_name] for field_name in empty_files],
+            },
+            status=400,
+        )
+
+    allowed_extensions = {
+        'schedule_image': {'.png', '.jpg', '.jpeg', '.webp'},
+        'host_data': {'.xlsx', '.xls', '.xlsm'},
+        'rating_update': {'.png', '.jpg', '.jpeg', '.webp'},
+    }
+    invalid_files = [
+        field_name
+        for field_name in submitted_fields
+        if os.path.splitext(uploaded_files[field_name].name)[1].lower() not in allowed_extensions[field_name]
+    ]
+    if invalid_files:
+        label_map = dict(FILE_LABELS)
+        return api_response(
+            {
+                'error': 'invalid_file_type',
+                'message': '排班表和评级更新请上传图片，兼职主播数据请上传 Excel 文件。',
+                'invalid_files': invalid_files,
+                'invalid_file_labels': [label_map[field_name] for field_name in invalid_files],
             },
             status=400,
         )
@@ -677,23 +711,25 @@ def create_payroll_job(request):
         )
 
     try:
-        job = PayrollJob.objects.create(
-            owner=request.user,
-            room_type=room_type,
-            week_start=week_start,
-            week_end=week_end,
-            host_schedule=uploaded_files['host_schedule'],
-            controller_schedule=uploaded_files['controller_schedule'],
-            trial_schedule=uploaded_files['trial_schedule'],
-            host_data=uploaded_files['host_data'],
-            status=PayrollJob.Status.PENDING,
-            summary={
+        job_values = {
+            'owner': request.user,
+            'room_type': room_type,
+            'week_start': week_start,
+            'week_end': week_end,
+            'schedule_image': uploaded_files['schedule_image'],
+            'host_data': uploaded_files['host_data'],
+            'status': PayrollJob.Status.PENDING,
+            'summary': {
                 'mode': 'codex-skill-worker',
                 'backend': 'codex_worker',
                 'skill': 'live-payroll',
                 'message': '任务已进入 Codex Worker 队列；Windows Worker 将按 live-payroll skill 生成正式薪资表。',
             },
-        )
+        }
+        if 'rating_update' in uploaded_files:
+            job_values['rating_update'] = uploaded_files['rating_update']
+            job_values['summary']['rating_update_supplied'] = True
+        job = PayrollJob.objects.create(**job_values)
     except Exception as exc:
         return api_response(
             {
@@ -769,12 +805,14 @@ def worker_download_payroll_asset(request, job_id, field_name):
             status=403,
         )
 
-    label_map = dict(FILE_LABELS)
+    label_map = dict(FILE_LABELS + LEGACY_FILE_LABELS)
     if field_name not in label_map:
         raise Http404('Payroll asset field does not exist.')
 
     job = get_object_or_404(PayrollJob, id=job_id)
     file_field = getattr(job, field_name)
+    if not file_field:
+        raise Http404('Payroll asset file does not exist.')
     try:
         return FileResponse(
             file_field.open('rb'),
