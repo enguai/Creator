@@ -14,7 +14,7 @@ from django.test import TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 
-from .douyin_monitor import matches_rule, parse_compact_number, validate_config
+from .douyin_monitor import matches_rule, monitor_manager, parse_compact_number, validate_config
 from .models import DouyinMonitorSession, FormAutomationJob, PayrollJob, Profile, UserSecurityEvent
 from .views import serialize_form_automation_job, serialize_payroll_job
 
@@ -329,6 +329,28 @@ class DouyinMonitorTests(TestCase):
         self.assertEqual(parse_compact_number('1,234'), 1234)
         self.assertFalse(validate_config({'enabled': True, 'webhook': 'http://example.com'})[0])
         self.assertFalse(validate_config({'mode': 'range', 'min': 10, 'max': 5})[0])
+
+    def test_numeric_douyin_id_resolves_from_live_room_page(self):
+        class Response:
+            text = '{"owner":{"sec_uid":"MS4wLjABAAAA-test-sec-uid"}}'
+
+            @staticmethod
+            def raise_for_status():
+                return None
+
+        class Http:
+            requested_url = ''
+
+            def get(self, url, **_kwargs):
+                self.requested_url = url
+                return Response()
+
+        http = Http()
+
+        sec_uid = monitor_manager._resolve_sec_uid(http, '95970755567')
+
+        self.assertEqual(sec_uid, 'MS4wLjABAAAA-test-sec-uid')
+        self.assertEqual(http.requested_url, 'https://live.douyin.com/95970755567')
 
     def test_empty_monitor_input_is_rejected_without_creating_a_session(self):
         response = self.client.post(

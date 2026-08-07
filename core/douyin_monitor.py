@@ -355,14 +355,20 @@ class DouyinMonitorManager:
         try:
             parsed = urlparse(value)
             if parsed.hostname == 'live.douyin.com' and re.match(r'^/\d+', parsed.path):
-                response = http.get(value, timeout=12)
-                response.raise_for_status()
-                match = re.search(r'\\?"owner\\?"\s*:\s*\{[\s\S]{0,2500}?\\?"sec_uid\\?"\s*:\s*\\?"([^"\\]+)\\?"', response.text)
-                if not match:
+                sec_uid = self._resolve_live_page_sec_uid(http, value)
+                if not sec_uid:
                     raise RuntimeError('无法从直播链接识别主播账号')
-                return match.group(1)
+                return sec_uid
         except ValueError:
             pass
+
+        if re.fullmatch(r'\d{5,20}', value):
+            try:
+                sec_uid = self._resolve_live_page_sec_uid(http, f'https://live.douyin.com/{value}')
+            except requests.RequestException:
+                sec_uid = ''
+            if sec_uid:
+                return sec_uid
 
         query = urlencode({
             'device_platform': 'webapp',
@@ -386,6 +392,16 @@ class DouyinMonitorManager:
                 if sec_uid:
                     return sec_uid
         raise RuntimeError('没有找到该抖音号，请检查输入是否正确')
+
+    @staticmethod
+    def _resolve_live_page_sec_uid(http, url):
+        response = http.get(url, timeout=12)
+        response.raise_for_status()
+        match = re.search(
+            r'\\?"owner\\?"\s*:\s*\{[\s\S]{0,2500}?\\?"sec_uid\\?"\s*:\s*\\?"([^"\\]+)\\?"',
+            response.text,
+        )
+        return match.group(1) if match else ''
 
     def _fetch_profile(self, http, sec_uid):
         query = urlencode({
