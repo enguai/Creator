@@ -160,6 +160,7 @@ MEDIA_ROOT = BASE_DIR / 'media'
 # client_max_body_size.
 DATA_UPLOAD_MAX_MEMORY_SIZE = 200 * 1024 * 1024
 FILE_UPLOAD_MAX_MEMORY_SIZE = 200 * 1024 * 1024
+DATA_UPLOAD_MAX_NUMBER_FILES = int(os.environ.get('DATA_UPLOAD_MAX_NUMBER_FILES', '500'))
 
 # SimpleUI admin branding (admin language follows LANGUAGE_CODE above).
 SIMPLEUI_HOME_INFO = False

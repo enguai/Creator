@@ -17,6 +17,7 @@ CODEX_APPROVAL_POLICY           defaults to never
 CODEX_WORKER_ROOT               local working dir, defaults to .codex-form-worker
 CODEX_WORKER_POLL_SECONDS       defaults to 10
 CODEX_WORKER_TIMEOUT_SECONDS    defaults to 1800
+CODEX_WORKER_LARGE_FORM_TIMEOUT_SECONDS defaults to 5400
 CODEX_WORKER_HEARTBEAT_SECONDS  defaults to 30
 CODEX_WORKER_LOCAL_RETENTION_DAYS defaults to 7
 CODEX_WORKER_MIN_FREE_GB        defaults to 2
@@ -44,6 +45,8 @@ import urllib.parse
 import urllib.request
 import uuid
 from zoneinfo import ZoneInfo
+
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
@@ -333,6 +336,85 @@ def safe_filename(name: str) -> str:
     return name or f"file-{uuid.uuid4().hex}"
 
 
+def create_material_contact_sheets(
+    job_dir: Path,
+    local_assets: list[tuple[dict, Path]],
+    group: str,
+) -> tuple[list[Path], Path | None]:
+    """Create numbered overview images so large batches stay auditable."""
+
+    entries = [
+        (asset, path_obj)
+        for asset, path_obj in local_assets
+        if asset.get("group") == group
+        and path_obj.suffix.lower() in IMAGE_EXTENSIONS
+    ]
+    if len(entries) <= 12:
+        return [], None
+
+    overview_dir = job_dir / "work" / f"{group}-overview"
+    overview_dir.mkdir(parents=True, exist_ok=True)
+    index_path = overview_dir / f"{group}-image-index.txt"
+    index_path.write_text(
+        "\n".join(
+            f"{index:03d}\t{path_obj}"
+            for index, (_asset, path_obj) in enumerate(entries, start=1)
+        ),
+        encoding="utf-8-sig",
+    )
+
+    try:
+        font = ImageFont.truetype(r"C:\Windows\Fonts\msyh.ttc", 22)
+    except OSError:
+        font = ImageFont.load_default()
+
+    columns = 3
+    rows = 3
+    page_size = columns * rows
+    cell_width = 600
+    cell_height = 600
+    sheets: list[Path] = []
+    for page_number, start in enumerate(range(0, len(entries), page_size), start=1):
+        sheet = Image.new("RGB", (columns * cell_width, rows * cell_height), "white")
+        draw = ImageDraw.Draw(sheet)
+        for slot, (_asset, path_obj) in enumerate(entries[start : start + page_size]):
+            item_number = start + slot + 1
+            left = (slot % columns) * cell_width
+            top = (slot // columns) * cell_height
+            label = f"{item_number:03d}  {path_obj.name[:24]}"
+            draw.text((left + 14, top + 12), label, font=font, fill="black")
+            try:
+                with Image.open(path_obj) as source:
+                    image = ImageOps.exif_transpose(source).convert("RGB")
+                    image.thumbnail((560, 520), Image.Resampling.LANCZOS)
+                    x = left + (cell_width - image.width) // 2
+                    y = top + 58 + (520 - image.height) // 2
+                    sheet.paste(image, (x, y))
+            except Exception as exc:  # noqa: BLE001 - one bad thumbnail must not block the task
+                draw.text((left + 20, top + 90), f"预览失败：{exc}"[:80], font=font, fill="#b91c1c")
+
+        sheet_path = overview_dir / f"{group}-overview-{page_number:02d}.jpg"
+        sheet.save(sheet_path, "JPEG", quality=88, optimize=True)
+        sheets.append(sheet_path)
+
+    return sheets, index_path
+
+
+def form_job_timeout_seconds(job: dict, local_assets: list[tuple[dict, Path]]) -> int:
+    base_timeout = max(300, int(env("CODEX_WORKER_TIMEOUT_SECONDS", "1800")))
+    image_group = "purchase_screenshots" if job.get("form_type") == "expense" else "reference_images"
+    image_count = sum(
+        1
+        for asset, path_obj in local_assets
+        if asset.get("group") == image_group
+        and path_obj.suffix.lower() in IMAGE_EXTENSIONS
+    )
+    if image_count > 30 or len(local_assets) > 60:
+        large_timeout = max(base_timeout, int(env("CODEX_WORKER_LARGE_FORM_TIMEOUT_SECONDS", "5400")))
+        return large_timeout
+    return base_timeout
+
+
 def form_result_filename(form_type: str, current_time: datetime | None = None) -> str:
     local_time = current_time or datetime.now(ZoneInfo("Asia/Shanghai"))
     if local_time.tzinfo is not None:
@@ -343,7 +425,8 @@ def form_result_filename(form_type: str, current_time: datetime | None = None) -
 
 def download_asset(asset: dict, job_dir: Path) -> Path:
     group = safe_filename(asset["group"])
-    target_dir = job_dir / "input" / group
+    asset_key = safe_filename(str(asset.get("id") or asset.get("group") or uuid.uuid4().hex))
+    target_dir = job_dir / "input" / group / asset_key
     target_dir.mkdir(parents=True, exist_ok=True)
     target = target_dir / safe_filename(asset["name"])
     request = urllib.request.Request(
@@ -359,17 +442,68 @@ def download_asset(asset: dict, job_dir: Path) -> Path:
     return target
 
 
-def build_prompt(job_payload: dict, local_assets: list[tuple[dict, Path]], output_path: Path) -> str:
+def build_prompt(
+    job_payload: dict,
+    local_assets: list[tuple[dict, Path]],
+    output_path: Path,
+    *,
+    contact_sheet_paths: list[Path] | None = None,
+    image_index_path: Path | None = None,
+    overview_group: str | None = None,
+) -> str:
     job = job_payload["job"]
     form_type_label = "费用报销表" if job["form_type"] == "expense" else "采购申请表"
     grouped: dict[str, list[str]] = {}
     for asset, path_obj in local_assets:
         grouped.setdefault(asset["group"], []).append(str(path_obj))
 
-    materials = "\n".join(
-        f"- {group}:\n" + "\n".join(f"  - {item}" for item in items)
-        for group, items in grouped.items()
-    )
+    material_sections = []
+    for group, items in grouped.items():
+        if group == overview_group and image_index_path:
+            material_sections.append(
+                f"- {group}: {len(items)} 张\n"
+                f"  - 原图编号索引：{image_index_path}"
+            )
+        else:
+            material_sections.append(
+                f"- {group}:\n" + "\n".join(f"  - {item}" for item in items)
+            )
+    if contact_sheet_paths:
+        material_sections.append(
+            f"- {overview_group}_overviews（仅用于快速总览，精确字段仍查看对应原图）：\n"
+            + "\n".join(f"  - {item}" for item in contact_sheet_paths)
+        )
+    materials = "\n".join(material_sections)
+
+    reference_count = len(grouped.get("reference_images", []))
+    purchase_count = len(grouped.get("purchase_screenshots", []))
+    invoice_count = len(grouped.get("invoices", []))
+    link_count = 0
+    for _asset, path_obj in local_assets:
+        if path_obj.suffix.lower() != ".txt":
+            continue
+        try:
+            link_count += len(re.findall(r"https?://\S+", path_obj.read_text(encoding="utf-8-sig")))
+        except OSError:
+            pass
+
+    procurement_instructions = ""
+    if job["form_type"] == "procurement":
+        procurement_instructions = f"""
+7. 本任务共有 {reference_count} 张采购参考图、{link_count} 条商品链接。参考图数量可以多于链接数量：同一个商品链接可能对应多个已选规格/颜色截图。每张不同的参考图生成一条明细；同一商品的多个规格允许复用同一链接；仅跳过内容完全相同或明显重复的截图，不得因为数量不一致而失败。
+8. 先从链接文本直接提取平台、商品标题和 URL，再按参考图中可见的品牌/品名匹配。链接文本已有明确标题时，不要逐个打开短链接；只有无法匹配时才打开个别链接核实。
+9. 若提供了 reference_overviews，先用总览图分组，再按编号索引打开需要精读的原图。总览图不得直接作为最终表格参考图，最终 `referenceImage` 必须指向对应原图。
+"""
+
+    large_batch_instructions = ""
+    if len(local_assets) > 30:
+        large_batch_instructions = f"""
+大批量处理要求：
+- 本任务共有购买截图 {purchase_count} 个、发票 {invoice_count} 个、采购参考图 {reference_count} 个。先按原图编号索引建立 `work/material-ledger.json` 台账，再开始识别。
+- 每批最多精读 10 张原图；每完成一批立即把文件路径、配对主干、识别状态和对应明细写入台账。不得只根据总览图填写价格、日期或规格。
+- 全部批次结束后核对台账：每个输入文件必须标记为已处理、明确重复、已配对或未匹配。未完成全量核对不得生成最终工作簿。
+- 所有批次合并为一个 manifest 和一个最终 xlsx，禁止按批次生成多个结果文件；恢复处理中断时从台账中未完成的编号继续。
+"""
 
     return f"""你是 Creator 网站后台的 Codex Worker。请严格使用 $expense-procurement-forms 技能完成本任务。
 
@@ -379,11 +513,12 @@ def build_prompt(job_payload: dict, local_assets: list[tuple[dict, Path]], outpu
 要求：
 1. 必须读取 expense-procurement-forms 的 SKILL.md 和 references/rules.md，并按该 skill 的质量门槛生成。
 2. 不要向用户追问，不要等待交互；如果材料不足，请尽最大可能基于可见证据处理，无法确定的字段按 skill 规则处理或在最终结果中说明。
-3. 费用报销表必须把发票原文件作为 Excel 附件对象嵌入，不要用发票截图冒充原始发票文件。
+3. 费用报销仅把文件名主干明确对应，或经发票内容与购买截图中的物品、金额等证据确认的发票原文件作为 Excel 附件对象嵌入；内容确认但文件名不对应时在该 item 写 `invoiceMatchConfirmed: true`。不得按文件顺序补配、顺延或借用其他物品发票。没有对应发票的物品仍须完整生成其他字段、公式和购买截图，L 列保持完全空白，不写占位文字。
 4. 采购申请表必须保留第二张“采购三方比价表”。
 5. 最终只需要生成一个 xlsx 文件，必须保存到下面这个绝对路径：
    {output_path}
-6. 生成完成后，请检查文件确实存在，并在最终回答中简短说明成功或失败。
+6. 这是固定生成器任务：使用 PowerShell 读取 `task.md`、`SKILL.md` 和 `references/rules.md` 时必须带 `-Encoding UTF8`；直接复制并运行 expense-procurement-forms 的 `scripts/generate_forms.mjs`。不要改写生成器，不要研究通用 Spreadsheets skill / artifact_tool，不要在生成前检查原始模板，也不要逐格扫描整份工作簿样式。
+{procurement_instructions}{large_batch_instructions}最后：生成完成后，只检查输出文件存在、主表为 A:M 13 列、采购申请保留第二张工作表；不得进行全表 computedStyle 或逐单元格检查。检查通过后立即结束任务并简短说明成功。
 
 材料文件：
 {materials}
@@ -479,6 +614,9 @@ def codex_command(prompt_path: Path, output_path: Path, image_paths: list[Path],
         "--cd",
         str(prompt_path.parent),
         "--skip-git-repo-check",
+        "--ephemeral",
+        "--color",
+        "never",
         "--output-last-message",
         str(final_message_path),
     ]
@@ -494,6 +632,10 @@ def codex_command(prompt_path: Path, output_path: Path, image_paths: list[Path],
     model = env("CODEX_MODEL")
     if model:
         args.extend(["--model", model])
+
+    reasoning_effort = env("CODEX_REASONING_EFFORT", "high")
+    if reasoning_effort:
+        args.extend(["--config", f'model_reasoning_effort="{reasoning_effort}"'])
 
     for image_path in image_paths:
         args.extend(["--image", str(image_path)])
@@ -613,21 +755,21 @@ def run_codex(
     *,
     output_path: Path,
     normalize_workbook: bool,
+    prompt_image_paths: list[Path] | None = None,
+    timeout_seconds: int | None = None,
 ) -> tuple[Path, dict]:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     prompt_path = job_dir / "task.md"
     final_message_path = job_dir / "codex-final-message.md"
     stdout_path = job_dir / "codex-stdout.log"
     stderr_path = job_dir / "codex-stderr.log"
-    prompt_path.write_text(prompt, encoding="utf-8")
+    prompt_path.write_text(prompt, encoding="utf-8-sig")
 
-    image_paths = [
-        path_obj
-        for _asset, path_obj in local_assets
-        if path_obj.suffix.lower() in IMAGE_EXTENSIONS
+    image_paths = prompt_image_paths if prompt_image_paths is not None else [
+        path_obj for _asset, path_obj in local_assets if path_obj.suffix.lower() in IMAGE_EXTENSIONS
     ]
     args = codex_command(prompt_path, output_path, image_paths, final_message_path)
-    timeout = int(env("CODEX_WORKER_TIMEOUT_SECONDS", "1800"))
+    timeout = timeout_seconds or int(env("CODEX_WORKER_TIMEOUT_SECONDS", "1800"))
     early_complete_seconds = int(env("CODEX_WORKER_EARLY_COMPLETE_SECONDS", "0"))
     started = time.time()
     early_completed = False
@@ -717,6 +859,8 @@ def run_codex(
         "mode": "codex-skill-worker",
         "worker": env("COMPUTERNAME", "windows-worker"),
         "duration_seconds": round(time.time() - started, 2),
+        "timeout_seconds": timeout,
+        "prompt_image_count": len(image_paths),
         "early_completed": early_completed,
         **normalize_summary,
         "codex_final_message": (
@@ -777,7 +921,26 @@ def process_form_job(job_payload: dict, reporter: HeartbeatReporter) -> None:
     local_assets = download_job_assets(job_payload, job_dir, reporter)
     output_path = job_dir / "output" / form_result_filename(job["form_type"])
     reporter.update(30, "任务文件已就绪，正在准备 Codex")
-    prompt = build_prompt(job_payload, local_assets, output_path)
+    contact_sheet_paths: list[Path] = []
+    image_index_path: Path | None = None
+    overview_group = "purchase_screenshots" if job["form_type"] == "expense" else "reference_images"
+    contact_sheet_paths, image_index_path = create_material_contact_sheets(
+        job_dir,
+        local_assets,
+        overview_group,
+    )
+    prompt = build_prompt(
+        job_payload,
+        local_assets,
+        output_path,
+        contact_sheet_paths=contact_sheet_paths,
+        image_index_path=image_index_path,
+        overview_group=overview_group,
+    )
+    original_images = [
+        path_obj for _asset, path_obj in local_assets if path_obj.suffix.lower() in IMAGE_EXTENSIONS
+    ]
+    prompt_images = contact_sheet_paths or original_images
 
     result_path, summary = run_codex(
         job_dir,
@@ -786,6 +949,14 @@ def process_form_job(job_payload: dict, reporter: HeartbeatReporter) -> None:
         reporter,
         output_path=output_path,
         normalize_workbook=False,
+        prompt_image_paths=prompt_images,
+        timeout_seconds=form_job_timeout_seconds(job, local_assets),
+    )
+    summary.update(
+        {
+            "material_count": len(local_assets),
+            "overview_image_count": len(contact_sheet_paths),
+        }
     )
     reporter.update(96, "正在上传结果文件")
     reporter.stop()

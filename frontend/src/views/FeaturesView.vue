@@ -61,7 +61,7 @@ const formAutomationTypes = {
     label: '费用报销表',
     templateName: '费用报销模板.xlsx',
     templateUrl: '/templates/费用报销模板.xlsx',
-    description: '适合根据购买信息截图和发票文件，自动整理费用报销明细。',
+    description: '根据购买信息截图自动整理费用报销明细；发票可选，未开票物品会留空。',
   },
   procurement: {
     label: '采购申请表',
@@ -99,6 +99,8 @@ const formApiHealth = ref({
   status: 'checking',
   message: '正在连接报销助手后端...',
   capabilities: null,
+  uploadLimitMb: 200,
+  uploadLimitFiles: 500,
 })
 const automationFiles = reactive({
   purchaseScreenshots: [],
@@ -179,7 +181,7 @@ const automationStatusLabel = computed(() => {
 
 const automationSubmitReady = computed(() => {
   if (automationType.value === 'expense') {
-    return automationFiles.purchaseScreenshots.length > 0 && automationFiles.invoices.length > 0
+    return automationFiles.purchaseScreenshots.length > 0
   }
 
   return automationFiles.referenceImages.length > 0 && Boolean(automationFiles.linkTxt)
@@ -203,6 +205,10 @@ const formAutomationModeLabel = computed(() => {
 })
 
 const automationSummary = computed(() => automationJob.value?.summary || {})
+
+const automationUploadLimitLabel = computed(() => (
+  `单次最多 ${formApiHealth.value.uploadLimitFiles} 个文件，总大小不超过 ${formApiHealth.value.uploadLimitMb}MB。`
+))
 
 const automationWarnings = computed(() => (
   Array.isArray(automationSummary.value.warnings) ? automationSummary.value.warnings : []
@@ -731,12 +737,16 @@ onMounted(async () => {
       status: 'ok',
       message: health.message || '报销助手后端已连接。',
       capabilities: health.capabilities || null,
+      uploadLimitMb: health.upload_limit_mb || 200,
+      uploadLimitFiles: health.upload_limit_files || 500,
     }
   } catch (error) {
     formApiHealth.value = {
       status: 'error',
       message: error.message || '无法连接到报销助手后端。',
       capabilities: null,
+      uploadLimitMb: 200,
+      uploadLimitFiles: 500,
     }
   }
 })
@@ -1297,13 +1307,13 @@ watch(automationType, () => {
                 multiple
                 @change="handleAutomationFolderChange('invoices', $event)"
               />
-              <span>发票文件夹</span>
+              <span>发票文件夹（可选）</span>
               <strong>{{ formatFileCount(automationFiles.invoices) }}</strong>
-              <p>上传 PDF 或图片发票所在文件夹，后续会与购买信息逐项匹配。</p>
+              <p>可少于购买截图；未开票物品的发票列会保持空白，不会借用其他发票。</p>
             </label>
           </div>
 
-          <p class="automation-upload-note">单次提交总上传上限 200MB；如果图片较多，建议先压缩后再上传。</p>
+          <p class="automation-upload-note">{{ automationUploadLimitLabel }} 图片较多时可先压缩再上传。</p>
 
           <div class="automation-actions">
             <button type="button" class="secondary-button" :disabled="isAutomationSubmitting" @click="submitAutomationJob">
@@ -1318,7 +1328,7 @@ watch(automationType, () => {
             <ul>
               <li>请确认 Django 后端服务已启动。</li>
               <li>如果上传的是文件夹，请确认文件夹内至少包含一个文件。</li>
-              <li>如果提示上传过大，请减少文件数量或压缩图片后再试。</li>
+              <li>请确认文件数量和总大小没有超过页面显示的单次上传限制。</li>
             </ul>
           </div>
         </div>

@@ -75,19 +75,34 @@ def grouped_assets(job):
     return groups
 
 
-def match_invoice_for_screenshot(screenshot, invoices, fallback_index):
-    if not invoices:
+def unique_invoice_match(asset_key, invoices):
+    if not asset_key or not invoices:
         return None
+
+    keyed_invoices = [
+        (invoice, normalized_asset_key(invoice.original_name))
+        for invoice in invoices
+    ]
+    exact_matches = [invoice for invoice, invoice_key in keyed_invoices if invoice_key == asset_key]
+    if len(exact_matches) == 1:
+        return exact_matches[0]
+    if exact_matches:
+        return None
+
+    fuzzy_matches = [
+        invoice
+        for invoice, invoice_key in keyed_invoices
+        if invoice_key
+        and min(len(invoice_key), len(asset_key)) >= 2
+        and (invoice_key in asset_key or asset_key in invoice_key)
+    ]
+    return fuzzy_matches[0] if len(fuzzy_matches) == 1 else None
+
+
+def match_invoice_for_screenshot(screenshot, invoices, _fallback_index=None):
     if not screenshot:
-        return invoices[fallback_index] if fallback_index < len(invoices) else None
-
-    screenshot_key = normalized_asset_key(screenshot.original_name)
-    for invoice in invoices:
-        invoice_key = normalized_asset_key(invoice.original_name)
-        if invoice_key and (invoice_key in screenshot_key or screenshot_key in invoice_key):
-            return invoice
-
-    return invoices[fallback_index] if fallback_index < len(invoices) else None
+        return None
+    return unique_invoice_match(normalized_asset_key(screenshot.original_name), invoices)
 
 
 def group_purchase_screenshots(screenshots):
@@ -102,16 +117,8 @@ def group_purchase_screenshots(screenshots):
     return groups
 
 
-def match_invoice_for_group(group_key, invoices, fallback_index):
-    if not invoices:
-        return None
-
-    for invoice in invoices:
-        invoice_key = normalized_asset_key(invoice.original_name)
-        if invoice_key and (invoice_key in group_key or group_key in invoice_key):
-            return invoice
-
-    return invoices[fallback_index] if fallback_index < len(invoices) else None
+def match_invoice_for_group(group_key, invoices, _fallback_index=None):
+    return unique_invoice_match(group_key, invoices)
 
 
 def expense_item_from_group(group, invoice=None):
@@ -1072,21 +1079,23 @@ def expense_manifest_items(job, workspace):
 
         fallback = expense_fallback_item(group, invoice)
         extracted = None
-        if screenshot_path and invoice:
+        if screenshot_path:
             try:
+                analysis_content = [
+                    {'type': 'input_text', 'text': '第一份附件为购买信息截图；如有第二份附件，则为与该物品明确对应的发票。'},
+                    openai_file_part('购买信息截图', screenshot_path),
+                ]
+                if invoice:
+                    analysis_content.append(openai_file_part('发票', invoice.file.path))
                 extracted = analyze_with_openai(
                     FormAutomationJob.FormType.EXPENSE,
-                    [
-                        {'type': 'input_text', 'text': '附件顺序为：购买信息截图、发票。'},
-                        openai_file_part('购买信息截图', screenshot_path),
-                        openai_file_part('发票', invoice.file.path),
-                    ],
+                    analysis_content,
                 )
                 ai_success += 1
             except Exception as exc:
                 warnings.append(f'费用报销第 {row_no} 项 AI 识别未启用或失败，已生成待复核行：{exc}')
         else:
-            warnings.append(f'费用报销第 {row_no} 项缺少购买截图或发票，已生成待复核行。')
+            warnings.append(f'费用报销第 {row_no} 项缺少购买截图，已生成待复核行。')
 
         if extracted:
             item = {
@@ -1121,8 +1130,6 @@ def expense_manifest_items(job, workspace):
 
         if not item['purchaseScreenshot']:
             raise RuntimeError(f'第 {row_no} 项缺少购买信息截图，无法生成费用报销表。')
-        if not item['invoice']:
-            raise RuntimeError(f'第 {row_no} 项缺少发票文件，无法生成费用报销表。')
         items.append(item)
     return items, warnings, ai_success
 
@@ -1307,7 +1314,7 @@ def fill_expense_sheet(workbook, job, base_url=''):
             f'=E{row}*F{row}',
             item['channel'],
             '',
-            '' if invoice else '未上传发票',
+            '',
             item['note'],
         ]
 

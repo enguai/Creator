@@ -3,6 +3,7 @@ import re
 import tempfile
 import uuid
 from datetime import timedelta
+from types import SimpleNamespace
 from unittest.mock import patch
 from urllib.parse import unquote
 
@@ -15,6 +16,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from .douyin_monitor import matches_rule, monitor_manager, parse_compact_number, validate_config
+from .form_automation import match_invoice_for_group
 from .models import DouyinMonitorSession, FormAutomationJob, PayrollJob, Profile, UserSecurityEvent
 from .views import serialize_form_automation_job, serialize_payroll_job
 
@@ -236,6 +238,85 @@ class WorkerQueueTests(TestCase):
             [item['field'] for item in response.json()['files']],
             ['schedule_image', 'host_data'],
         )
+
+    def test_expense_submission_accepts_purchase_screenshots_without_invoices(self):
+        response = self.client.post(
+            reverse('form-automation-job-create'),
+            data={
+                'form_type': FormAutomationJob.FormType.EXPENSE,
+                'purchase_screenshots': SimpleUploadedFile(
+                    '未开票物品-购买信息.png',
+                    b'purchase',
+                    content_type='image/png',
+                ),
+            },
+        )
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.json()['asset_counts']['purchase_screenshots'], 1)
+        self.assertEqual(response.json()['asset_counts'].get('invoices', 0), 0)
+
+    def test_expense_submission_accepts_more_than_one_hundred_files(self):
+        purchase_files = [
+            SimpleUploadedFile(
+                f'物品{i:03d}-购买信息.jpg',
+                b'purchase',
+                content_type='image/jpeg',
+            )
+            for i in range(56)
+        ]
+        invoice_files = [
+            SimpleUploadedFile(
+                f'物品{i:03d}-发票.pdf',
+                b'invoice',
+                content_type='application/pdf',
+            )
+            for i in range(56)
+        ]
+
+        response = self.client.post(
+            reverse('form-automation-job-create'),
+            data={
+                'form_type': FormAutomationJob.FormType.EXPENSE,
+                'purchase_screenshots': purchase_files,
+                'invoices': invoice_files,
+            },
+        )
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.json()['asset_counts']['purchase_screenshots'], 56)
+        self.assertEqual(response.json()['asset_counts']['invoices'], 56)
+
+    @override_settings(DATA_UPLOAD_MAX_NUMBER_FILES=1)
+    def test_expense_submission_reports_file_count_limit(self):
+        response = self.client.post(
+            reverse('form-automation-job-create'),
+            data={
+                'form_type': FormAutomationJob.FormType.EXPENSE,
+                'purchase_screenshots': [
+                    SimpleUploadedFile('物品1.jpg', b'1', content_type='image/jpeg'),
+                    SimpleUploadedFile('物品2.jpg', b'2', content_type='image/jpeg'),
+                ],
+            },
+        )
+
+        self.assertEqual(response.status_code, 413)
+        self.assertEqual(response.json()['error'], 'too_many_files')
+        self.assertEqual(response.json()['upload_limit_files'], 1)
+
+    def test_invoice_matching_does_not_fall_back_to_file_position(self):
+        unrelated_invoice = SimpleNamespace(original_name='数据线-发票.pdf')
+
+        matched = match_invoice_for_group('未开票物品', [unrelated_invoice], 0)
+
+        self.assertIsNone(matched)
+
+    def test_invoice_matching_keeps_a_unique_filename_match(self):
+        expected_invoice = SimpleNamespace(original_name='数据线-发票.pdf')
+
+        matched = match_invoice_for_group('5米数据线', [expected_invoice], 0)
+
+        self.assertIs(matched, expected_invoice)
 
     def test_payroll_submission_rejects_missing_combined_schedule_image(self):
         response = self.client.post(

@@ -9,7 +9,7 @@ from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
 from django.conf import settings
-from django.core.exceptions import RequestDataTooBig
+from django.core.exceptions import RequestDataTooBig, TooManyFilesSent
 from django.db import transaction
 from django.db.models import F
 from django.http import FileResponse, Http404, JsonResponse
@@ -568,6 +568,7 @@ def form_automation_health(_request):
             'capabilities': capabilities,
             'server_time': timezone.localtime(timezone.now()).isoformat(),
             'upload_limit_mb': settings.DATA_UPLOAD_MAX_MEMORY_SIZE // 1024 // 1024,
+            'upload_limit_files': settings.DATA_UPLOAD_MAX_NUMBER_FILES,
         }
     )
 
@@ -959,6 +960,15 @@ def create_form_automation_job(request):
     try:
         uploaded_files = request.FILES
         post_data = request.POST
+    except TooManyFilesSent:
+        return api_response(
+            {
+                'error': 'too_many_files',
+                'message': f'单次最多上传 {settings.DATA_UPLOAD_MAX_NUMBER_FILES} 个文件，请分成多个任务提交。',
+                'upload_limit_files': settings.DATA_UPLOAD_MAX_NUMBER_FILES,
+            },
+            status=413,
+        )
     except RequestDataTooBig:
         return api_response(
             {
@@ -988,7 +998,7 @@ def create_form_automation_job(request):
         )
 
     required_groups = (
-        ('purchase_screenshots', 'invoices')
+        ('purchase_screenshots',)
         if form_type == FormAutomationJob.FormType.EXPENSE
         else ('reference_images', 'link_txt')
     )
