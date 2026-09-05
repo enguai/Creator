@@ -824,3 +824,13 @@ class GuardLicenseTests(TestCase):
         response = self.client.get(reverse('admin:core_guardlicense_changelist'))
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, '卫士软件授权')
+        GuardLicenseDevice.objects.create(
+            license=self.license,
+            machine_code=self.machine_code,
+            token_hash='1' * 64,
+        )
+        detail = self.client.get(reverse('admin:core_guardlicense_change', args=[self.license.id]))
+        self.assertEqual(detail.status_code, 200)
+        self.assertContains(detail, '<code class="guard-machine-code">' + self.machine_code + '</code>', html=True)
+        self.assertContains(detail, 'core/admin/guard-license.css')
+        self.assertContains(detail, 'guard-device-inline')

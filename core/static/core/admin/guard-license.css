@@ -1,0 +1,18 @@
+/* Keep the hidden identity fields, but omit the duplicate object caption. */
+.guard-device-inline .original {
+    display: none;
+}
+.guard-device-inline .has_original td {
+    padding-top: 12px !important;
+    vertical-align: middle;
+}
+.guard-device-inline .guard-machine-code {
+    display: block;
+    min-width: 220px;
+    max-width: 320px;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    word-break: break-all;
+    user-select: all;
+    font: 13px/1.6 Consolas, monospace;
+}

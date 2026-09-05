@@ -3,6 +3,7 @@ from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
 from django.contrib.auth.forms import UserChangeForm, UserCreationForm
 from django.contrib.auth.models import User
+from django.utils.html import format_html
 
 from .models import (
     DouyinMonitorConfig,
@@ -27,6 +28,10 @@ class GuardLicenseDeviceInline(admin.TabularInline):
     model = GuardLicenseDevice
     extra = 0
     can_delete = False
+    classes = ('guard-device-inline',)
+
+    class Media:
+        css = {'all': ('core/admin/guard-license.css',)}
     fields = (
         'device_short_code',
         'app_version',
@@ -47,7 +52,9 @@ class GuardLicenseDeviceInline(admin.TabularInline):
 
     @admin.display(description='机器码')
     def device_short_code(self, obj):
-        return obj.machine_code[:16] if obj and obj.machine_code else '保存后显示'
+        if not obj or not obj.machine_code:
+            return '保存后显示'
+        return format_html('<code class="guard-machine-code">{}</code>', obj.machine_code)
 
     def has_add_permission(self, request, obj=None):
         return False
