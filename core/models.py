@@ -2,7 +2,19 @@ from django.db import models
 from django.contrib.auth.models import User
 from django.utils.text import get_valid_filename
 
+import secrets
 import uuid
+
+
+GUARD_LICENSE_ALPHABET = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ'
+
+
+def generate_guard_activation_code():
+    groups = [
+        ''.join(secrets.choice(GUARD_LICENSE_ALPHABET) for _index in range(5))
+        for _group in range(4)
+    ]
+    return f'LAG-{"-".join(groups)}'
 
 
 def payroll_output_path(instance, filename):
@@ -65,6 +77,80 @@ class Profile(models.Model):
 
     def __str__(self):
         return self.nickname
+
+
+class GuardLicense(models.Model):
+    class Status(models.TextChoices):
+        ACTIVE = 'active', '正常'
+        SUSPENDED = 'suspended', '暂停使用'
+        REVOKED = 'revoked', '已撤销'
+
+    id = models.UUIDField('授权编号', primary_key=True, default=uuid.uuid4, editable=False)
+    activation_code = models.CharField(
+        '激活码',
+        max_length=32,
+        unique=True,
+        default=generate_guard_activation_code,
+        editable=False,
+    )
+    licensee_name = models.CharField('被授权人或单位', max_length=120)
+    status = models.CharField(
+        '授权状态',
+        max_length=20,
+        choices=Status.choices,
+        default=Status.ACTIVE,
+    )
+    expires_at = models.DateTimeField('到期时间', null=True, blank=True)
+    max_devices = models.PositiveSmallIntegerField('允许电脑数量', default=1)
+    offline_grace_days = models.PositiveSmallIntegerField('断网宽限天数', default=7)
+    notes = models.TextField('备注', blank=True)
+    created_at = models.DateTimeField('创建时间', auto_now_add=True)
+    updated_at = models.DateTimeField('更新时间', auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = '卫士软件授权'
+        verbose_name_plural = '卫士软件授权'
+        indexes = [
+            models.Index(fields=['status', 'expires_at'], name='guard_license_status_idx'),
+        ]
+
+    def __str__(self):
+        return f'{self.licensee_name}（{self.activation_code}）'
+
+
+class GuardLicenseDevice(models.Model):
+    id = models.UUIDField('设备编号', primary_key=True, default=uuid.uuid4, editable=False)
+    license = models.ForeignKey(
+        GuardLicense,
+        on_delete=models.CASCADE,
+        related_name='devices',
+        verbose_name='所属授权',
+    )
+    machine_code = models.CharField('机器码摘要', max_length=64)
+    token_hash = models.CharField('设备令牌摘要', max_length=64, unique=True, editable=False)
+    app_version = models.CharField('软件版本', max_length=30, blank=True)
+    is_revoked = models.BooleanField('设备已解绑', default=False)
+    last_ip = models.GenericIPAddressField('最近 IP', null=True, blank=True)
+    activated_at = models.DateTimeField('首次激活时间', auto_now_add=True)
+    last_seen_at = models.DateTimeField('最近验证时间', auto_now=True)
+
+    class Meta:
+        ordering = ['-last_seen_at']
+        verbose_name = '卫士授权设备'
+        verbose_name_plural = '卫士授权设备'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['license', 'machine_code'],
+                name='guard_license_machine_unique',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['license', 'is_revoked'], name='guard_device_active_idx'),
+        ]
+
+    def __str__(self):
+        return f'{self.license.licensee_name} · {self.machine_code[:12]}'
 
 
 class PayrollJob(models.Model):

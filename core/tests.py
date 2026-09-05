@@ -17,7 +17,15 @@ from django.utils import timezone
 
 from .douyin_monitor import matches_rule, monitor_manager, parse_compact_number, validate_config
 from .form_automation import match_invoice_for_group
-from .models import DouyinMonitorSession, FormAutomationJob, PayrollJob, Profile, UserSecurityEvent
+from .models import (
+    DouyinMonitorSession,
+    FormAutomationJob,
+    GuardLicense,
+    GuardLicenseDevice,
+    PayrollJob,
+    Profile,
+    UserSecurityEvent,
+)
 from .views import serialize_form_automation_job, serialize_payroll_job
 
 
@@ -689,3 +697,130 @@ class AdminUserManagementTests(TestCase):
         user = User.objects.get(username='created-in-admin')
         self.assertEqual(user.profile.nickname, user.username)
         self.assertTrue(user.is_active)
+
+
+class GuardLicenseTests(TestCase):
+    machine_code = 'a' * 64
+
+    def setUp(self):
+        self.license = GuardLicense.objects.create(
+            licensee_name='测试直播间',
+            max_devices=1,
+            offline_grace_days=7,
+        )
+
+    def post_json(self, name, payload):
+        return self.client.post(
+            reverse(name),
+            data=json.dumps(payload),
+            content_type='application/json',
+        )
+
+    def test_desktop_can_activate_without_site_login_and_validate_token(self):
+        activation = self.post_json(
+            'guard-license-activate',
+            {
+                'activation_code': self.license.activation_code.lower(),
+                'machine_code': self.machine_code,
+                'app_version': '2.5',
+            },
+        )
+        self.assertEqual(activation.status_code, 200)
+        payload = activation.json()
+        self.assertTrue(payload['ok'])
+        self.assertEqual(payload['license']['licensee_name'], '测试直播间')
+        self.assertEqual(payload['license']['offline_grace_days'], 7)
+
+        validation = self.post_json(
+            'guard-license-validate',
+            {
+                'machine_code': self.machine_code,
+                'device_token': payload['device_token'],
+                'app_version': '2.5',
+            },
+        )
+        self.assertEqual(validation.status_code, 200)
+        self.assertTrue(validation.json()['ok'])
+        self.assertEqual(GuardLicenseDevice.objects.get().app_version, '2.5')
+
+    def test_device_limit_requires_admin_to_release_old_device(self):
+        first = self.post_json(
+            'guard-license-activate',
+            {
+                'activation_code': self.license.activation_code,
+                'machine_code': self.machine_code,
+                'app_version': '2.5',
+            },
+        )
+        self.assertEqual(first.status_code, 200)
+        second = self.post_json(
+            'guard-license-activate',
+            {
+                'activation_code': self.license.activation_code,
+                'machine_code': 'b' * 64,
+                'app_version': '2.5',
+            },
+        )
+        self.assertEqual(second.status_code, 403)
+        self.assertEqual(second.json()['code'], 'device_limit')
+
+        device = GuardLicenseDevice.objects.get(machine_code=self.machine_code)
+        device.is_revoked = True
+        device.save(update_fields=['is_revoked'])
+        retry = self.post_json(
+            'guard-license-activate',
+            {
+                'activation_code': self.license.activation_code,
+                'machine_code': 'b' * 64,
+                'app_version': '2.5',
+            },
+        )
+        self.assertEqual(retry.status_code, 200)
+
+        old_device_retry = self.post_json(
+            'guard-license-activate',
+            {
+                'activation_code': self.license.activation_code,
+                'machine_code': self.machine_code,
+                'app_version': '2.5',
+            },
+        )
+        self.assertEqual(old_device_retry.status_code, 403)
+        self.assertEqual(old_device_retry.json()['code'], 'device_limit')
+
+    def test_suspended_and_expired_license_cannot_be_used(self):
+        self.license.status = GuardLicense.Status.SUSPENDED
+        self.license.save(update_fields=['status'])
+        suspended = self.post_json(
+            'guard-license-activate',
+            {
+                'activation_code': self.license.activation_code,
+                'machine_code': self.machine_code,
+            },
+        )
+        self.assertEqual(suspended.status_code, 403)
+        self.assertEqual(suspended.json()['code'], 'suspended')
+
+        self.license.status = GuardLicense.Status.ACTIVE
+        self.license.expires_at = timezone.now() - timedelta(seconds=1)
+        self.license.save(update_fields=['status', 'expires_at'])
+        expired = self.post_json(
+            'guard-license-activate',
+            {
+                'activation_code': self.license.activation_code,
+                'machine_code': self.machine_code,
+            },
+        )
+        self.assertEqual(expired.status_code, 403)
+        self.assertEqual(expired.json()['code'], 'expired')
+
+    def test_admin_has_guard_license_management_page(self):
+        admin_user = User.objects.create_superuser(
+            username='license-admin',
+            email='license-admin@example.com',
+            password='StrongAdminPass123!',
+        )
+        self.client.force_login(admin_user)
+        response = self.client.get(reverse('admin:core_guardlicense_changelist'))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, '卫士软件授权')

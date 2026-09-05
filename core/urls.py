@@ -3,9 +3,12 @@ from django.urls import path
 from . import views
 from . import douyin_views
 from . import auth_views
+from . import guard_license_views
 
 
 urlpatterns = [
+    path('guard-license/activate/', guard_license_views.activate_license, name='guard-license-activate'),
+    path('guard-license/validate/', guard_license_views.validate_license, name='guard-license-validate'),
     path('auth/session/', auth_views.session_detail, name='auth-session'),
     path('auth/login/', auth_views.login_user, name='auth-login'),
     path('auth/logout/', auth_views.logout_user, name='auth-logout'),

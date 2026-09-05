@@ -173,7 +173,7 @@ SIMPLEUI_HOME_TITLE = '用户资料'
 SIMPLEUI_HOME_ICON = 'far fa-id-card'
 SIMPLEUI_CONFIG = {
     'system_keep': False,
-    'menu_display': ['用户信息管理', '任务管理', '直播监控管理', '安全管理'],
+    'menu_display': ['用户信息管理', '任务管理', '直播监控管理', '卫士软件管理', '安全管理'],
     'menus': [
         {
             'name': '用户信息管理',
@@ -197,6 +197,13 @@ SIMPLEUI_CONFIG = {
             'models': [
                 {'name': '监控记录', 'icon': 'fas fa-chart-line', 'url': '/admin/core/douyinmonitorsession/'},
                 {'name': '告警配置', 'icon': 'far fa-bell', 'url': '/admin/core/douyinmonitorconfig/'},
+            ],
+        },
+        {
+            'name': '卫士软件管理',
+            'icon': 'fas fa-key',
+            'models': [
+                {'name': '授权管理', 'icon': 'fas fa-laptop-code', 'url': '/admin/core/guardlicense/'},
             ],
         },
         {

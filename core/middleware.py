@@ -15,6 +15,8 @@ PUBLIC_API_PATHS = {
     '/api/auth/password-reset-confirm/',
     '/api/forms/health/',
     '/api/payroll/health/',
+    '/api/guard-license/activate/',
+    '/api/guard-license/validate/',
 }
 WORKER_API_PREFIXES = (
     '/api/forms/worker/',

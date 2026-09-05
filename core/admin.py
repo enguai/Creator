@@ -9,6 +9,8 @@ from .models import (
     DouyinMonitorSession,
     FormAutomationAsset,
     FormAutomationJob,
+    GuardLicense,
+    GuardLicenseDevice,
     PayrollJob,
     Profile,
     UserSecurityEvent,
@@ -19,6 +21,77 @@ class CreatorAdminMixin:
     list_per_page = 25
     show_full_result_count = False
     save_on_top = True
+
+
+class GuardLicenseDeviceInline(admin.TabularInline):
+    model = GuardLicenseDevice
+    extra = 0
+    can_delete = False
+    fields = (
+        'device_short_code',
+        'app_version',
+        'is_revoked',
+        'activated_at',
+        'last_seen_at',
+        'last_ip',
+    )
+    readonly_fields = (
+        'device_short_code',
+        'app_version',
+        'activated_at',
+        'last_seen_at',
+        'last_ip',
+    )
+    verbose_name = '已绑定电脑'
+    verbose_name_plural = '已绑定电脑（勾选“设备已解绑”即可释放名额）'
+
+    @admin.display(description='机器码')
+    def device_short_code(self, obj):
+        return obj.machine_code[:16] if obj and obj.machine_code else '保存后显示'
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(GuardLicense)
+class GuardLicenseAdmin(CreatorAdminMixin, admin.ModelAdmin):
+    list_display = (
+        'licensee_name',
+        'activation_code',
+        'status',
+        'expires_at',
+        'device_usage',
+        'offline_grace_days',
+        'created_at',
+    )
+    list_filter = ('status', 'expires_at', 'created_at')
+    search_fields = ('licensee_name', 'activation_code', 'notes')
+    search_help_text = '可按被授权人、激活码或备注搜索'
+    readonly_fields = ('id', 'activation_code', 'created_at', 'updated_at')
+    fieldsets = (
+        ('授权信息', {'fields': ('id', 'activation_code', 'licensee_name', 'status')}),
+        ('使用限制', {'fields': ('expires_at', 'max_devices', 'offline_grace_days')}),
+        ('备注与时间', {'fields': ('notes', 'created_at', 'updated_at')}),
+    )
+    inlines = (GuardLicenseDeviceInline,)
+    actions = ('enable_licenses', 'suspend_licenses', 'revoke_licenses')
+
+    @admin.display(description='电脑使用量')
+    def device_usage(self, obj):
+        used = obj.devices.filter(is_revoked=False).count()
+        return f'{used} / {obj.max_devices}'
+
+    @admin.action(description='启用所选授权')
+    def enable_licenses(self, request, queryset):
+        queryset.update(status=GuardLicense.Status.ACTIVE)
+
+    @admin.action(description='暂停所选授权')
+    def suspend_licenses(self, request, queryset):
+        queryset.update(status=GuardLicense.Status.SUSPENDED)
+
+    @admin.action(description='撤销所选授权')
+    def revoke_licenses(self, request, queryset):
+        queryset.update(status=GuardLicense.Status.REVOKED)
 
 
 def validate_admin_email(email, user=None):
