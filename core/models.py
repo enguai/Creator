@@ -159,6 +159,7 @@ class PayrollJob(models.Model):
         NECK_MASK = 'z4-neck', 'Z4 颈膜直播间'
         EYE_MASK = 'z2-eye', 'Z2 眼膜直播间'
         POLISH_MASK = 'z3-polish', 'Z3 抛光直播间'
+        MUD_MASK = 'z5-mud', 'Z5 泥膜直播间'
 
     class Status(models.TextChoices):
         PENDING = 'pending', '等待处理'

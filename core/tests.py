@@ -247,6 +247,37 @@ class WorkerQueueTests(TestCase):
             ['schedule_image', 'host_data'],
         )
 
+    def test_z5_payroll_submission_query_and_worker_routing(self):
+        from pathlib import Path
+        from scripts.codex_form_worker import build_payroll_prompt
+
+        response = self.client.post(
+            reverse('payroll-job-create'),
+            data={
+                'room_type': 'z5-mud',
+                'schedule_image': SimpleUploadedFile('schedule.png', b'schedule', content_type='image/png'),
+                'host_data': SimpleUploadedFile('host-data.xlsx', b'data'),
+            },
+        )
+        self.assertEqual(response.status_code, 201)
+        job_id = response.json()['id']
+        task = self.client.get(reverse('worker-task-detail', args=[job_id])).json()
+        self.assertEqual(task['task_label'], '薪资计算 · Z5 泥膜直播间')
+        self.assertEqual(PayrollJob.objects.get(pk=job_id).get_room_type_display(), 'Z5 泥膜直播间')
+
+        claimed = self.post_json(reverse('payroll-worker-job-next')).json()
+        self.assertEqual(claimed['job']['room_type'], 'z5-mud')
+        prompt = build_payroll_prompt(claimed, [], Path('result.xlsx'))
+        self.assertIn('generate_z5_payroll.mjs', prompt)
+        self.assertIn('assets/configs/z5-mud.json', prompt)
+        self.assertIn('费用报销明细表和兼职评级两张工作表', prompt)
+        self.assertNotIn('verify_payroll.mjs', prompt)
+
+        claimed['job']['room_type'] = 'z2-eye'
+        existing_prompt = build_payroll_prompt(claimed, [], Path('result.xlsx'))
+        self.assertIn('generate_payroll.mjs 和 verify_payroll.mjs', existing_prompt)
+        self.assertNotIn('generate_z5_payroll.mjs', existing_prompt)
+
     def test_expense_submission_accepts_purchase_screenshots_without_invoices(self):
         response = self.client.post(
             reverse('form-automation-job-create'),

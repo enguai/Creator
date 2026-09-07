@@ -475,6 +475,7 @@ def get_worker_task(request, job_id):
             'z4-neck': 'Z4 颈膜直播间',
             'z2-eye': 'Z2 眼膜直播间',
             'z3-polish': 'Z3 抛光直播间',
+            'z5-mud': 'Z5 泥膜直播间',
         }
         task_label = f"薪资计算 · {room_labels.get(job.room_type, job.room_type)}"
 
@@ -687,12 +688,12 @@ def create_payroll_job(request):
         )
 
     room_type = post_data.get('room_type', '').strip()
-    supported_rooms = {'z4-neck', 'z2-eye', 'z3-polish'}
+    supported_rooms = {'z4-neck', 'z2-eye', 'z3-polish', 'z5-mud'}
     if room_type not in supported_rooms:
         return api_response(
             {
                 'error': 'invalid_room_type',
-                'message': '请选择 Z4 颈膜、Z2 眼膜或 Z3 抛光直播间。',
+                'message': '请选择 Z4 颈膜、Z2 眼膜、Z3 抛光或 Z5 泥膜直播间。',
             },
             status=400,
         )

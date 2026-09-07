@@ -54,6 +54,7 @@ const roomTypes = [
   { value: 'z4-neck', label: 'Z4 颈膜直播间' },
   { value: 'z2-eye', label: 'Z2 眼膜直播间' },
   { value: 'z3-polish', label: 'Z3 抛光直播间' },
+  { value: 'z5-mud', label: 'Z5 泥膜直播间' },
 ]
 
 const formAutomationTypes = {
