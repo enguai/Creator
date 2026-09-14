@@ -410,3 +410,6 @@ class VerificationCode(models.Model):
 
     def __str__(self):
         return f'{self.get_channel_display()}验证码：{self.destination}'
+
+
+from .knowledge_models import KnowledgeArticle, KnowledgeCategory, KnowledgeRevision  # noqa: E402,F401

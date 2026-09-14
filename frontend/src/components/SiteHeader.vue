@@ -11,10 +11,8 @@ const { currentUser } = useAuth()
 const menuOpen = ref(false)
 const navItems = [
   { label: '首页', to: '/' },
-  { label: '产品', to: '/products' },
+  { label: '文档库', to: '/library' },
   { label: '工具库', to: '/features' },
-  { label: '品牌', to: '/brand' },
-  { label: '联系我们', to: '/contact' },
 ]
 
 watch(() => route.path, () => { menuOpen.value = false })
@@ -30,13 +28,13 @@ async function logout() {
     <div class="header-inner container">
       <RouterLink to="/" class="brand" aria-label="造物者首页">
         <span class="brand-logo"><img :src="logo" alt="造物者" /></span>
-        <span class="brand-en">CREATOR</span>
+        <span class="brand-en">知识中心</span>
       </RouterLink>
       <button class="menu-toggle" type="button" :aria-expanded="menuOpen" aria-label="打开导航" @click="menuOpen = !menuOpen">
         <span></span><span></span>
       </button>
       <nav class="nav" :class="{ open: menuOpen }" aria-label="主导航">
-        <RouterLink v-for="item in navItems" :key="item.to" :to="item.to" class="nav-link" exact-active-class="active">
+        <RouterLink v-for="item in navItems" :key="item.to" :to="item.to" class="nav-link" :class="{ active: item.to !== '/' && route.path.startsWith(item.to) }" exact-active-class="active">
           {{ item.label }}
         </RouterLink>
         <div v-if="currentUser" class="header-account">

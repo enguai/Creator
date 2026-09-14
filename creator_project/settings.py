@@ -173,8 +173,16 @@ SIMPLEUI_HOME_TITLE = '用户资料'
 SIMPLEUI_HOME_ICON = 'far fa-id-card'
 SIMPLEUI_CONFIG = {
     'system_keep': False,
-    'menu_display': ['用户信息管理', '任务管理', '直播监控管理', '卫士软件管理', '安全管理'],
+    'menu_display': ['知识管理', '用户信息管理', '任务管理', '直播监控管理', '卫士软件管理', '安全管理'],
     'menus': [
+        {
+            'name': '知识管理',
+            'icon': 'fas fa-book-open',
+            'models': [
+                {'name': '教程与审核', 'icon': 'far fa-file-lines', 'url': '/admin/core/knowledgerevision/'},
+                {'name': '知识分类', 'icon': 'fas fa-folder-tree', 'url': '/admin/core/knowledgecategory/'},
+            ],
+        },
         {
             'name': '用户信息管理',
             'icon': 'fas fa-users',

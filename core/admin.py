@@ -4,6 +4,7 @@ from django.contrib.auth.admin import UserAdmin
 from django.contrib.auth.forms import UserChangeForm, UserCreationForm
 from django.contrib.auth.models import User
 from django.utils.html import format_html
+from . import knowledge_admin  # noqa: F401
 
 from .models import (
     DouyinMonitorConfig,
@@ -166,6 +167,15 @@ class CreatorUserAdmin(CreatorAdminMixin, UserAdmin):
             'fields': ('username', 'email', 'password1', 'password2', 'is_active'),
         }),
     )
+
+    def get_fieldsets(self, request, obj=None):
+        fields = super().get_fieldsets(request, obj)
+        if obj and request.user.is_superuser:
+            return (*fields, ('后台权限（仅管理员可分配）', {
+                'fields': ('is_staff', 'groups'),
+                'description': '需要维护知识的人员，请开启后台访问并分配知识编辑或知识审核组。普通员工无需开启。',
+            }))
+        return fields
 
     @admin.display(description='密码')
     def password_status(self, obj):

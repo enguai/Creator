@@ -32,7 +32,7 @@ const mode = computed(() => route.meta.authMode || 'login')
 const content = computed(() => ({
   login: {
     eyebrow: 'WELCOME BACK',
-    title: '登录造物者',
+    title: '登录知识中心',
     description: '使用用户名和密码登录。',
     action: '登录',
   },
@@ -203,8 +203,8 @@ onBeforeUnmount(stopCountdown)
     <div class="auth-brand-panel">
       <img :src="creatorAuthImage" alt="造物者" />
       <div>
-        <span>CREATOR LIVE COMMERCE</span>
-        <p>认真创造，让每一次被看见都更从容。</p>
+        <span>造物者直播间知识中心</span>
+        <p>让直播经验成为随时可以找到的答案。</p>
       </div>
     </div>
 

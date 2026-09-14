@@ -9,7 +9,7 @@ const authPage = computed(() => Boolean(route.meta.publicAuth))
 </script>
 
 <template>
-  <div class="site-shell" :class="{ 'is-auth-page': authPage }">
+  <div class="site-shell" :class="{ 'is-auth-page': authPage, 'is-knowledge-page': route.meta.knowledge }">
     <SiteHeader v-if="!authPage" />
     <main :class="{ 'auth-main': authPage }">
       <RouterView />

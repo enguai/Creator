@@ -4,9 +4,13 @@ from . import views
 from . import douyin_views
 from . import auth_views
 from . import guard_license_views
+from . import knowledge_views
 
 
 urlpatterns = [
+    path('knowledge/catalog/', knowledge_views.knowledge_catalog, name='knowledge-catalog'),
+    path('knowledge/articles/', knowledge_views.knowledge_list, name='knowledge-list'),
+    path('knowledge/articles/<uuid:article_id>/', knowledge_views.knowledge_detail, name='knowledge-detail'),
     path('guard-license/activate/', guard_license_views.activate_license, name='guard-license-activate'),
     path('guard-license/validate/', guard_license_views.validate_license, name='guard-license-validate'),
     path('auth/session/', auth_views.session_detail, name='auth-session'),
