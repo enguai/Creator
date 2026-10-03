@@ -5,6 +5,7 @@ from django.contrib.auth.forms import UserChangeForm, UserCreationForm
 from django.contrib.auth.models import User
 from django.utils.html import format_html
 from . import knowledge_admin  # noqa: F401
+from .knowledge_models import KnowledgeConversation, KnowledgeMessage, KnowledgeQuestionAsset, KnowledgeQuestionJob
 
 from .models import (
     DouyinMonitorConfig,
@@ -236,6 +237,59 @@ class FormAutomationJobAdmin(CreatorAdminMixin, admin.ModelAdmin):
     inlines = (FormAutomationAssetInline,)
     date_hierarchy = 'created_at'
     list_select_related = ('owner',)
+
+
+class KnowledgeQuestionAssetInline(admin.TabularInline):
+    model = KnowledgeQuestionAsset
+    extra = 0
+    readonly_fields = ('file', 'original_name', 'size', 'content_type', 'created_at')
+    can_delete = False
+    verbose_name = '数据源文件'
+    verbose_name_plural = '数据源文件'
+
+
+@admin.register(KnowledgeQuestionJob)
+class KnowledgeQuestionJobAdmin(CreatorAdminMixin, admin.ModelAdmin):
+    list_display = ('id', 'owner', 'question_short', 'status', 'progress', 'created_at', 'finished_at')
+    list_filter = ('status', 'created_at')
+    search_fields = ('id', 'owner__username', 'question', 'error_message')
+    search_help_text = '可按任务 ID、用户账号、问题或失败原因搜索'
+    readonly_fields = (
+        'id', 'owner', 'question', 'answer', 'result_file', 'citations', 'summary', 'progress', 'progress_message',
+        'worker_id', 'claim_token', 'lease_expires_at', 'attempt_count', 'started_at', 'finished_at',
+        'error_message', 'created_at', 'updated_at',
+    )
+    date_hierarchy = 'created_at'
+    list_select_related = ('owner',)
+    inlines = (KnowledgeQuestionAssetInline,)
+
+    @admin.display(description='问题')
+    def question_short(self, obj):
+        return obj.question[:60]
+
+
+@admin.register(KnowledgeConversation)
+class KnowledgeConversationAdmin(CreatorAdminMixin, admin.ModelAdmin):
+    list_display = ('id', 'owner', 'title', 'created_at', 'updated_at')
+    list_filter = ('created_at', 'updated_at')
+    search_fields = ('id', 'owner__username', 'title')
+    readonly_fields = ('id', 'owner', 'title', 'created_at', 'updated_at')
+    list_select_related = ('owner',)
+    date_hierarchy = 'created_at'
+
+
+@admin.register(KnowledgeMessage)
+class KnowledgeMessageAdmin(CreatorAdminMixin, admin.ModelAdmin):
+    list_display = ('id', 'conversation', 'role', 'content_short', 'created_at')
+    list_filter = ('role', 'created_at')
+    search_fields = ('conversation__title', 'content', 'conversation__owner__username')
+    readonly_fields = ('conversation', 'job', 'role', 'content', 'created_at')
+    list_select_related = ('conversation', 'job', 'conversation__owner')
+    date_hierarchy = 'created_at'
+
+    @admin.display(description='消息内容')
+    def content_short(self, obj):
+        return obj.content[:60]
 
 
 @admin.register(DouyinMonitorSession)

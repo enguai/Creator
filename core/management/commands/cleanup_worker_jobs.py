@@ -4,6 +4,7 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 from django.utils import timezone
 
+from core.knowledge_models import KnowledgeQuestionJob
 from core.models import FormAutomationJob, PayrollJob
 
 
@@ -33,6 +34,10 @@ class Command(BaseCommand):
                 status__in=[PayrollJob.Status.SUCCESS, PayrollJob.Status.FAILED],
                 updated_at__lt=cutoff,
             )),
+            ('Codex 知识问答', KnowledgeQuestionJob.objects.filter(
+                status__in=[KnowledgeQuestionJob.Status.SUCCESS, KnowledgeQuestionJob.Status.FAILED],
+                updated_at__lt=cutoff,
+            ).prefetch_related('assets')),
         )
 
         for label, queryset in querysets:
@@ -62,6 +67,11 @@ class Command(BaseCommand):
     def _delete_job_files(self, job):
         self._delete_file(job.result_file)
         if isinstance(job, FormAutomationJob):
+            for asset in job.assets.all():
+                self._delete_file(asset.file)
+            return
+
+        if isinstance(job, KnowledgeQuestionJob):
             for asset in job.assets.all():
                 self._delete_file(asset.file)
             return

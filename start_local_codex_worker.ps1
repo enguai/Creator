@@ -20,6 +20,7 @@ $codexExecutable = Get-ChildItem "$env:LOCALAPPDATA\OpenAI\Codex\bin\*\codex.exe
     Select-Object -First 1 -ExpandProperty FullName
 
 $env:CREATOR_SERVER_URL = 'http://127.0.0.1:8000'
+$env:CREATOR_PAYROLL_SKILL_PATH = Join-Path $env:USERPROFILE '.codex\skills\live-payroll\SKILL.md'
 $env:FORM_AUTOMATION_WORKER_TOKEN = $workerToken
 $env:CODEX_BIN = $codexExecutable
 $env:CODEX_WORKER_ROOT = 'C:\CreatorCodexLocalWorker'
@@ -27,7 +28,7 @@ $env:CODEX_WORKER_POLL_SECONDS = '5'
 $env:CODEX_WORKER_TIMEOUT_SECONDS = '1800'
 $env:CODEX_WORKER_LARGE_FORM_TIMEOUT_SECONDS = '5400'
 $env:CODEX_WORKER_EARLY_COMPLETE_SECONDS = '45'
-$env:CODEX_REASONING_EFFORT = 'high'
+$env:CODEX_REASONING_EFFORT = 'ultra'
 $env:CODEX_WORKER_HEARTBEAT_SECONDS = '30'
 $env:CODEX_WORKER_LOCAL_RETENTION_DAYS = '7'
 $env:CODEX_WORKER_MIN_FREE_GB = '2'

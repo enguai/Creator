@@ -21,6 +21,7 @@ PUBLIC_API_PATHS = {
 WORKER_API_PREFIXES = (
     '/api/forms/worker/',
     '/api/payroll/worker/',
+    '/api/knowledge/worker/',
 )
 
 

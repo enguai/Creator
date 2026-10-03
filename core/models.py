@@ -412,4 +412,11 @@ class VerificationCode(models.Model):
         return f'{self.get_channel_display()}验证码：{self.destination}'
 
 
-from .knowledge_models import KnowledgeArticle, KnowledgeCategory, KnowledgeRevision  # noqa: E402,F401
+from .knowledge_models import (  # noqa: E402,F401
+    KnowledgeArticle,
+    KnowledgeCategory,
+    KnowledgeConversation,
+    KnowledgeMessage,
+    KnowledgeQuestionJob,
+    KnowledgeRevision,
+)

@@ -26,6 +26,7 @@ from .models import (
     Profile,
     UserSecurityEvent,
 )
+from .knowledge_models import KnowledgeQuestionJob
 from .views import serialize_form_automation_job, serialize_payroll_job
 
 
@@ -73,6 +74,69 @@ class WorkerQueueTests(TestCase):
             host_data=SimpleUploadedFile('data.xlsx', b'data'),
             rating_update=SimpleUploadedFile('rating.png', b'rating', content_type='image/png'),
         )
+
+    def test_knowledge_question_accepts_multiple_data_source_files(self):
+        response = self.client.post(
+            reverse('knowledge-question-create'),
+            {
+                'question': '请分析这两份数据。',
+                'files': [
+                    SimpleUploadedFile('sales.xlsx', b'xlsx-data', content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'),
+                    SimpleUploadedFile('notes.pdf', b'pdf-data', content_type='application/pdf'),
+                ],
+            },
+        )
+
+        self.assertEqual(response.status_code, 201)
+        payload = response.json()
+        self.assertEqual(len(payload['files']), 2)
+        job = KnowledgeQuestionJob.objects.get(id=payload['id'])
+        self.assertEqual(job.assets.count(), 2)
+        self.assertEqual(
+            set(job.assets.values_list('original_name', flat=True)),
+            {'sales.xlsx', 'notes.pdf'},
+        )
+
+    def test_knowledge_question_rejects_unsupported_file(self):
+        response = self.client.post(
+            reverse('knowledge-question-create'),
+            {
+                'question': '请分析文件。',
+                'files': [SimpleUploadedFile('script.exe', b'not-allowed')],
+            },
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('不支持', response.json()['message'])
+        self.assertEqual(KnowledgeQuestionJob.objects.count(), 0)
+
+    def test_knowledge_worker_payload_contains_and_protects_uploaded_files(self):
+        created = self.client.post(
+            reverse('knowledge-question-create'),
+            {
+                'question': '请读取这份表格。',
+                'files': [SimpleUploadedFile('data.csv', b'a,b\n1,2', content_type='text/csv')],
+            },
+        )
+        job_id = created.json()['id']
+
+        claimed = self.post_json(
+            reverse('knowledge-worker-job-next'),
+            {'worker_id': 'worker-a'},
+        )
+        self.assertEqual(claimed.status_code, 200)
+        asset = claimed.json()['assets'][0]
+        self.assertEqual(asset['name'], 'data.csv')
+
+        denied = self.client.get(reverse('knowledge-worker-asset-download', args=[asset['id']]))
+        self.assertEqual(denied.status_code, 403)
+        downloaded = self.client.get(
+            reverse('knowledge-worker-asset-download', args=[asset['id']]),
+            **self.worker_headers,
+        )
+        self.assertEqual(downloaded.status_code, 200)
+        self.assertEqual(b''.join(downloaded.streaming_content), b'a,b\n1,2')
+        self.assertEqual(claimed.json()['job']['id'], job_id)
 
     def test_form_job_is_claimed_only_once(self):
         job = self.create_form_job()
@@ -267,15 +331,17 @@ class WorkerQueueTests(TestCase):
 
         claimed = self.post_json(reverse('payroll-worker-job-next')).json()
         self.assertEqual(claimed['job']['room_type'], 'z5-mud')
-        prompt = build_payroll_prompt(claimed, [], Path('result.xlsx'))
-        self.assertIn('generate_z5_payroll.mjs', prompt)
-        self.assertIn('assets/configs/z5-mud.json', prompt)
-        self.assertIn('费用报销明细表和兼职评级两张工作表', prompt)
-        self.assertNotIn('verify_payroll.mjs', prompt)
+        skill_path = Path('/shared/live-payroll/SKILL.md')
+        prompt = build_payroll_prompt(claimed, [], Path('result.xlsx'), skill_path=skill_path)
+        self.assertIn(skill_path.as_posix(), prompt)
+        self.assertIn('z5-mud', prompt)
+        self.assertIn('Z5 泥膜直播间', prompt)
+        self.assertNotIn('generate_z5_payroll.mjs', prompt)
 
         claimed['job']['room_type'] = 'z2-eye'
-        existing_prompt = build_payroll_prompt(claimed, [], Path('result.xlsx'))
-        self.assertIn('generate_payroll.mjs 和 verify_payroll.mjs', existing_prompt)
+        existing_prompt = build_payroll_prompt(claimed, [], Path('result.xlsx'), skill_path=skill_path)
+        self.assertIn(skill_path.as_posix(), existing_prompt)
+        self.assertIn('z2-eye', existing_prompt)
         self.assertNotIn('generate_z5_payroll.mjs', existing_prompt)
 
     def test_expense_submission_accepts_purchase_screenshots_without_invoices(self):

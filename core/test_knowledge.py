@@ -1,11 +1,21 @@
+import json
+
 from django.contrib import admin
 from django.contrib.auth.models import Group, User
 from django.core.exceptions import PermissionDenied, ValidationError
-from django.test import RequestFactory, TestCase
+from django.core.files.uploadedfile import SimpleUploadedFile
+from django.test import RequestFactory, TestCase, override_settings
 from django.urls import reverse
 
 from .knowledge import transition
-from .knowledge_models import KnowledgeArticle, KnowledgeCategory, KnowledgeRevision
+from .knowledge_models import (
+    KnowledgeArticle,
+    KnowledgeCategory,
+    KnowledgeConversation,
+    KnowledgeMessage,
+    KnowledgeQuestionJob,
+    KnowledgeRevision,
+)
 
 
 class KnowledgeTests(TestCase):
@@ -156,3 +166,222 @@ class KnowledgeTests(TestCase):
     def test_pagination(self):
         self.publish()
         self.assertEqual(self.results(page=2)['results'], [])
+
+    @override_settings(FORM_AUTOMATION_WORKER_TOKEN='test-worker-token')
+    def test_codex_question_worker_runs_as_independent_chat_and_saves_answer(self):
+        self.publish()
+        draft = transition(self.revision.pk, self.editor, 'clone')
+        draft.title = '不应被 Codex 读取的草稿'
+        draft.save(update_fields=['title'])
+
+        response = self.client.post(
+            reverse('knowledge-question-create'),
+            data=json.dumps({'question': '麦克风没有声音怎么办'}),
+            content_type='application/json',
+        )
+        self.assertEqual(response.status_code, 201)
+        job_id = response.json()['id']
+        claim = self.client.post(
+            reverse('knowledge-worker-job-next'),
+            data=json.dumps({'worker_id': 'test-worker'}),
+            content_type='application/json',
+            HTTP_X_CREATOR_WORKER_TOKEN='test-worker-token',
+        )
+        self.assertEqual(claim.status_code, 200)
+        payload = claim.json()
+        self.assertEqual(payload['job']['id'], job_id)
+        self.assertNotIn('knowledge_context', payload)
+
+        completed = self.client.post(
+            reverse('knowledge-worker-job-complete', args=[job_id]),
+            data=json.dumps({
+                'claim_token': payload['claim_token'],
+                'answer': '请检查设备连接、输入设备和试听结果。',
+                'citations': [{'id': str(self.revision.article_id), 'title': self.revision.title}],
+            }),
+            content_type='application/json',
+            HTTP_X_CREATOR_WORKER_TOKEN='test-worker-token',
+        )
+        self.assertEqual(completed.status_code, 200)
+        self.assertEqual(completed.json()['status'], KnowledgeQuestionJob.Status.SUCCESS)
+        self.assertEqual(self.client.get(reverse('knowledge-question-detail', args=[job_id])).json()['progress'], 100)
+
+    @override_settings(FORM_AUTOMATION_WORKER_TOKEN='test-worker-token')
+    def test_codex_question_can_return_a_downloadable_result_file(self):
+        response = self.client.post(
+            reverse('knowledge-question-create'),
+            data=json.dumps({'question': '请分析这份表格并生成汇总结果'}),
+            content_type='application/json',
+        )
+        job_id = response.json()['id']
+        claim = self.client.post(
+            reverse('knowledge-worker-job-next'),
+            data=json.dumps({'worker_id': 'test-worker'}),
+            content_type='application/json',
+            HTTP_X_CREATOR_WORKER_TOKEN='test-worker-token',
+        ).json()
+        completed = self.client.post(
+            reverse('knowledge-worker-job-complete', args=[job_id]),
+            data={
+                'claim_token': claim['claim_token'],
+                'answer': '已生成汇总结果。',
+                'citations': '[]',
+                'summary': '{"result_file_generated": true}',
+                'result_file': SimpleUploadedFile('数据分析结果.xlsx', b'xlsx-result'),
+            },
+            HTTP_X_CREATOR_WORKER_TOKEN='test-worker-token',
+        )
+
+        self.assertEqual(completed.status_code, 200)
+        result = completed.json()['result_file']
+        self.assertEqual(result['name'], '数据分析结果.xlsx')
+        self.assertTrue(result['download_url'])
+        downloaded = self.client.get(result['download_url'])
+        self.assertEqual(downloaded.status_code, 200)
+        self.assertEqual(b''.join(downloaded.streaming_content), b'xlsx-result')
+
+        other_user = User.objects.create_user('file-reader')
+        self.client.force_login(other_user)
+        self.assertEqual(self.client.get(result['download_url']).status_code, 404)
+
+    @override_settings(FORM_AUTOMATION_WORKER_TOKEN='test-worker-token')
+    def test_codex_conversation_keeps_history_for_follow_up(self):
+        first = self.client.post(
+            reverse('knowledge-question-create'),
+            data=json.dumps({'question': '第一轮问题'}),
+            content_type='application/json',
+        )
+        self.assertEqual(first.status_code, 201)
+        conversation_id = first.json()['conversation_id']
+        first_id = first.json()['id']
+
+        first_claim = self.client.post(
+            reverse('knowledge-worker-job-next'),
+            data=json.dumps({'worker_id': 'test-worker'}),
+            content_type='application/json',
+            HTTP_X_CREATOR_WORKER_TOKEN='test-worker-token',
+        )
+        first_payload = first_claim.json()
+        self.client.post(
+            reverse('knowledge-worker-job-complete', args=[first_id]),
+            data=json.dumps({
+                'claim_token': first_payload['claim_token'],
+                'answer': '第一轮回答',
+            }),
+            content_type='application/json',
+            HTTP_X_CREATOR_WORKER_TOKEN='test-worker-token',
+        )
+
+        second = self.client.post(
+            reverse('knowledge-question-create'),
+            data=json.dumps({'question': '继续刚才的问题', 'conversation_id': conversation_id}),
+            content_type='application/json',
+        )
+        self.assertEqual(second.status_code, 201)
+        second_id = second.json()['id']
+        second_claim = self.client.post(
+            reverse('knowledge-worker-job-next'),
+            data=json.dumps({'worker_id': 'test-worker'}),
+            content_type='application/json',
+            HTTP_X_CREATOR_WORKER_TOKEN='test-worker-token',
+        )
+        history = second_claim.json()['conversation_messages']
+        self.assertEqual(
+            [(item['role'], item['content']) for item in history],
+            [('user', '第一轮问题'), ('assistant', '第一轮回答')],
+        )
+
+        self.client.post(
+            reverse('knowledge-worker-job-complete', args=[second_id]),
+            data=json.dumps({
+                'claim_token': second_claim.json()['claim_token'],
+                'answer': '第二轮回答',
+            }),
+            content_type='application/json',
+            HTTP_X_CREATOR_WORKER_TOKEN='test-worker-token',
+        )
+        detail = self.client.get(reverse('knowledge-conversation-detail', args=[conversation_id]))
+        self.assertEqual(detail.status_code, 200)
+        self.assertEqual(
+            [(item['role'], item['content']) for item in detail.json()['messages']],
+            [('user', '第一轮问题'), ('assistant', '第一轮回答'),
+             ('user', '继续刚才的问题'), ('assistant', '第二轮回答')],
+        )
+
+    @override_settings(FORM_AUTOMATION_WORKER_TOKEN='test-worker-token')
+    def test_codex_question_reuses_implicit_conversation_without_id(self):
+        first = self.client.post(
+            reverse('knowledge-question-create'),
+            data=json.dumps({'question': '请记住这个测试背景'}),
+            content_type='application/json',
+        )
+        self.assertEqual(first.status_code, 201)
+        conversation_id = first.json()['conversation_id']
+        first_id = first.json()['id']
+
+        first_claim = self.client.post(
+            reverse('knowledge-worker-job-next'),
+            data=json.dumps({'worker_id': 'test-worker'}),
+            content_type='application/json',
+            HTTP_X_CREATOR_WORKER_TOKEN='test-worker-token',
+        )
+        self.client.post(
+            reverse('knowledge-worker-job-complete', args=[first_id]),
+            data=json.dumps({
+                'claim_token': first_claim.json()['claim_token'],
+                'answer': '已记住测试背景。',
+            }),
+            content_type='application/json',
+            HTTP_X_CREATOR_WORKER_TOKEN='test-worker-token',
+        )
+
+        second = self.client.post(
+            reverse('knowledge-question-create'),
+            data=json.dumps({'question': '请继续刚才的测试'}),
+            content_type='application/json',
+        )
+        self.assertEqual(second.status_code, 201)
+        self.assertEqual(second.json()['conversation_id'], conversation_id)
+
+        second_claim = self.client.post(
+            reverse('knowledge-worker-job-next'),
+            data=json.dumps({'worker_id': 'test-worker'}),
+            content_type='application/json',
+            HTTP_X_CREATOR_WORKER_TOKEN='test-worker-token',
+        )
+        self.assertEqual(
+            [(item['role'], item['content']) for item in second_claim.json()['conversation_messages']],
+            [('user', '请记住这个测试背景'), ('assistant', '已记住测试背景。')],
+        )
+
+    def test_codex_conversation_rejects_parallel_question_and_is_private(self):
+        first = self.client.post(
+            reverse('knowledge-question-create'),
+            data=json.dumps({'question': '尚未完成的问题'}),
+            content_type='application/json',
+        )
+        conversation_id = first.json()['conversation_id']
+        duplicate = self.client.post(
+            reverse('knowledge-question-create'),
+            data=json.dumps({'question': '同一对话的重复提交', 'conversation_id': conversation_id}),
+            content_type='application/json',
+        )
+        self.assertEqual(duplicate.status_code, 409)
+        self.assertEqual(KnowledgeQuestionJob.objects.filter(conversation_id=conversation_id).count(), 1)
+
+        other_user = User.objects.create_user('other-reader')
+        self.client.force_login(other_user)
+        self.assertEqual(
+            self.client.get(reverse('knowledge-conversation-detail', args=[conversation_id])).status_code,
+            404,
+        )
+        self.assertEqual(self.client.get(reverse('knowledge-conversation-list')).json()['conversations'], [])
+
+    def test_codex_question_requires_login(self):
+        self.client.logout()
+        response = self.client.post(
+            reverse('knowledge-question-create'),
+            data=json.dumps({'question': '测试问题'}),
+            content_type='application/json',
+        )
+        self.assertEqual(response.status_code, 401)

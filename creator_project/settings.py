@@ -197,6 +197,9 @@ SIMPLEUI_CONFIG = {
             'models': [
                 {'name': '薪资计算任务', 'icon': 'fas fa-wallet', 'url': '/admin/core/payrolljob/'},
                 {'name': '报销与采购任务', 'icon': 'far fa-file-lines', 'url': '/admin/core/formautomationjob/'},
+                {'name': 'Codex 知识问答', 'icon': 'fas fa-comments', 'url': '/admin/core/knowledgequestionjob/'},
+                {'name': 'Codex 对话', 'icon': 'far fa-comments', 'url': '/admin/core/knowledgeconversation/'},
+                {'name': 'Codex 消息', 'icon': 'far fa-comment-dots', 'url': '/admin/core/knowledgemessage/'},
             ],
         },
         {
